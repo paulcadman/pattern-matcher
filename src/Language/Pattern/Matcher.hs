@@ -1,21 +1,28 @@
 module Language.Pattern.Matcher where
 
+import Control.Monad
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe
 
 type Arity = Int
 
-data Skel tag pat = Skel tag [pat]
+type Range tag = [tag]
+
+data Skel tag pat = Skel (Range tag) tag [pat]
 
 skelArity :: Skel tag pat -> Arity
-skelArity (Skel _ ps) = length ps
+skelArity (Skel _ _ ps) = length ps
+
+skelRange :: Skel tag pat -> [tag]
+skelRange (Skel rng _ _) = rng
 
 data Matcher m tag pat expr =
   Matcher { deconstruct         :: pat -> m [Maybe (Skel tag pat)]
           , match               :: pat -> expr -> m expr
           , wildPat             :: pat
           , tagExpr             :: tag -> m expr
-          , select              :: [Skel tag pat]
-                                -> m (Skel tag pat, [Skel tag pat])
+          , select              :: NonEmpty (Skel tag pat)
+                                -> m (NonEmpty (Skel tag pat))
           , handleNonExhaustive :: m (Tree tag pat expr)
           , handleRedundant     :: m ()
           }
@@ -32,8 +39,9 @@ data Row pat = Row [pat] Index
 
 type Matrix pat = [Row pat]
 
-catNewRows :: Index
-           -> [Maybe [pat]]
+catNewRows :: Foldable f
+           => Index
+           -> f (Maybe [pat])
            -> Matrix pat
            -> Matrix pat
 catNewRows out nrows matrix =
@@ -51,15 +59,15 @@ specialize :: ( Eq tag
            -> m (Matrix pat)
 specialize _ _ [] = pure []
 specialize _ _ rs@(Row [] _ : _) = pure rs
-specialize matcher skel@(Skel skelTag sps) (Row (p : ps) out : rows) = do
+specialize matcher skel@(Skel _ skelTag sps) (Row (p : ps) out : rows) = do
   skelsp <- deconstruct matcher p
   let nrow skelp =
         case skelp of
           Nothing -> Just (replicate (skelArity skel) (wildPat matcher) ++ ps)
-          Just (Skel consTag subp)
+          Just (Skel _ consTag subp)
             | consTag == skelTag -> Just (sps ++ ps)
             | otherwise -> Nothing
-  rows <- specialize skel rows
+  rows <- specialize matcher skel rows
   pure (catNewRows out (fmap nrow skelsp) rows)
 
 defaultMatrix :: Monad m
@@ -87,11 +95,11 @@ compileMatrix :: ( Monad m
 compileMatrix matcher occ [] = pure Fail
 compileMatrix matcher occ (Row ps out : ors) = do
   flattenedRow <- traverse (deconstruct matcher) ps
-  case break isNothing flattenedRow of
+  case break isNothing (concat flattenedRow) of
     (ps, []) -> do
       unless (null ps) (handleRedundant matcher)
       pure (Leaf out)
-    (wps, nwps) -> do
-      (selSkel, oskls) <- match select (fmap fromJust nwps)
+    (wps, (p : nwps)) -> do
+      (selSkel :| oskls) <- select matcher (fmap fromJust (p :| nwps))
 
       undefined
