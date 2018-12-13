@@ -83,7 +83,10 @@ defaultMatrix matcher (Row (p : ps) out : rows) = do
           Nothing -> Just (Row ps out)
           Just _  -> Nothing
   rows <- defaultMatrix matcher rows
-  pure (catNewRows out (fmap nrow skelsp) rows)
+  pure (foldr (\nrow rows ->
+                  case nrow of
+                    Just row -> row : rows
+                    Nothing  -> rows) rows (fmap nrow skelsp))
 
 compileMatrix :: ( Monad m
                  , Eq tag
@@ -99,7 +102,6 @@ compileMatrix matcher occ (Row ps out : ors) = do
     (ps, []) -> do
       unless (null ps) (handleRedundant matcher)
       pure (Leaf out)
-    (wps, (p : nwps)) -> do
+    (wps, p : nwps) -> do
       (selSkel :| oskls) <- select matcher (fmap fromJust (p :| nwps))
-
       undefined
