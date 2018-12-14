@@ -1,28 +1,21 @@
+{-# LANGUAGE DataKinds, PatternSynonyms, TypeOperators #-}
+
 module Language.Pattern.Matcher where
 
 import Control.Monad
-import Data.List.NonEmpty (NonEmpty (..))
+import Data.Foldable
+import Data.List.NonEmpty    (NonEmpty (..))
 import Data.Maybe
+import Data.Ord
 
-type Arity = Int
-
-type Range tag = [tag]
-
-data Skel tag pat = Skel (Range tag) tag [pat]
-
-skelArity :: Skel tag pat -> Arity
-skelArity (Skel _ _ ps) = length ps
-
-skelRange :: Skel tag pat -> [tag]
-skelRange (Skel rng _ _) = rng
+import Language.Pattern.Skel
 
 data Matcher m tag pat expr =
   Matcher { deconstruct         :: pat -> m [Maybe (Skel tag pat)]
           , match               :: pat -> expr -> m expr
           , wildPat             :: pat
           , tagExpr             :: tag -> m expr
-          , select              :: NonEmpty (Skel tag pat)
-                                -> m (NonEmpty (Skel tag pat))
+          , heuristic           :: expr -> [pat] -> Int
           , handleNonExhaustive :: m (Tree tag pat expr)
           , handleRedundant     :: m ()
           }
@@ -38,6 +31,13 @@ data Branch tag pat expr = Branch tag (Tree tag pat expr)
 data Row pat = Row [pat] Index
 
 type Matrix pat = [Row pat]
+
+columnView :: Matrix pat -> [[pat]]
+columnView [] = repeat []
+columnView (Row ps _ : rows) = zipWith (:) ps cols
+  where cols = columnView rows
+
+
 
 catNewRows :: Foldable f
            => Index
@@ -73,9 +73,9 @@ specialize matcher skel@(Skel _ skelTag sps) (Row (p : ps) out : rows) = do
 defaultMatrix :: Monad m
               => Matcher m tag pat expr
               -> Matrix pat
-              -> Matrix pat
-defaultMatrix _ [] = []
-defaultMatrix _ rs@(Row [] _ : _) = rs
+              -> m (Matrix pat)
+defaultMatrix _ [] = pure []
+defaultMatrix _ rs@(Row [] _ : _) = pure rs
 defaultMatrix matcher (Row (p : ps) out : rows) = do
   skelsp <- deconstruct matcher p
   let nrow skelp =
@@ -83,10 +83,42 @@ defaultMatrix matcher (Row (p : ps) out : rows) = do
           Nothing -> Just (Row ps out)
           Just _  -> Nothing
   rows <- defaultMatrix matcher rows
-  pure (foldr (\nrow rows ->
-                  case nrow of
-                    Just row -> row : rows
-                    Nothing  -> rows) rows (fmap nrow skelsp))
+  pure (foldr (maybe id (:)) rows (fmap nrow skelsp))
+
+swapFront :: Int -> [a] -> [a]
+swapFront n _ | n < 0 = error "The index selected \
+                              \by the pattern matching \
+                              \heuristic cannot be negative"
+swapFront n ps = p' : ps'
+  where go 0 (p : ps) = (p, ps)
+        go n (p : ps) = (p', p : ps')
+          where (p', ps') = go (n - 1) ps
+
+        (p', ps') = go n ps
+
+headConstructorSet :: Foldable f
+                   => f (Maybe (Skel tag pat))
+                   -> [tag]
+headConstructorSet =
+  foldr (\mc cs ->
+           case mc of
+             Nothing           -> cs
+             Just (Skel _ t _) -> t : cs) []
+
+splitBy :: (a -> Either p q) -> [a] -> ([p], [q])
+splitBy _ [] = ([],[])
+splitBy func (x : xs) =
+  case func x of
+    Left p  -> (p : ps, qs)
+    Right q -> (ps, q : qs)
+  where (ps, qs) = splitBy func xs
+
+filterMap :: (a -> Maybe b) -> [a] -> [b]
+filterMap func =
+  foldr (\x ys ->
+           case func x of
+             Nothing -> ys
+             Just y  -> y : ys) []
 
 compileMatrix :: ( Monad m
                  , Eq tag
@@ -96,12 +128,34 @@ compileMatrix :: ( Monad m
               -> Matrix pat
               -> m (Tree tag pat expr)
 compileMatrix matcher occ [] = pure Fail
-compileMatrix matcher occ (Row ps out : ors) = do
+compileMatrix matcher occ matrix@(Row ps out : ors) = do
   flattenedRow <- traverse (deconstruct matcher) ps
-  case break isNothing (concat flattenedRow) of
-    (ps, []) -> do
-      unless (null ps) (handleRedundant matcher)
+  let headConses = concatMap headConstructorSet flattenedRow
+  -- Check if there is any pattern that is not a wildcard in the top
+  -- row of the matrix.
+  case headConses of
+    [] -> do
+      -- If all patterns are wildcards (or if the line is empty) on
+      -- the top row then the matching always succeeds. If there
+      -- remains some lines in the matrix, these lines are redundant
+      unless (null ors) (handleRedundant matcher)
       pure (Leaf out)
-    (wps, p : nwps) -> do
-      (selSkel :| oskls) <- select matcher (fmap fromJust (p :| nwps))
-      undefined
+    _ : _ -> do
+      -- If some patterns don't have a wildcard, we must shuffle the
+      -- columns of the matrix to find the one with the highest score
+      -- given by the heuristic function.
+      let idx =
+            fst $ maximumBy (comparing snd) $
+            zip [0..] (zipWith (heuristic matcher) occ (columnView matrix))
+          Row (p : ps) out : ors =
+            fmap (\(Row ps out) -> Row (swapFront idx ps) out) matrix
+          shuffledOcc =
+            swapFront idx occ
+
+
+
+      -- skelIdx <- select matcher (p :| nwps)
+      -- let selPat : opats = swapFront skelIdx ps
+      --     selOcc : occs = swapFront skelIdx occ
+
+      pure undefined
