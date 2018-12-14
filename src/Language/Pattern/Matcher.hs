@@ -10,8 +10,8 @@ import Data.Ord
 
 import Language.Pattern.Skel
 
-data Matcher m tag pat expr =
-  Matcher { deconstruct         :: pat -> m [Maybe (Skel tag pat)]
+data Matcher m ident tag pat expr =
+  Matcher { deconstruct         :: pat -> m [Skel ident tag pat]
           , match               :: pat -> expr -> m expr
           , wildPat             :: pat
           , tagExpr             :: tag -> m expr
@@ -28,16 +28,14 @@ data Tree tag pat expr = Fail
 
 data Branch tag pat expr = Branch tag (Tree tag pat expr)
 
-data Row pat = Row [pat] Index
+data Row ident tag pat = Row [Skel ident tag pat] Index
 
-type Matrix pat = [Row pat]
+type Matrix ident tag pat = [Row ident tag pat]
 
-columnView :: Matrix pat -> [[pat]]
+columnView :: Matrix ident tag pat -> [[pat]]
 columnView [] = repeat []
 columnView (Row ps _ : rows) = zipWith (:) ps cols
   where cols = columnView rows
-
-
 
 catNewRows :: Foldable f
            => Index
