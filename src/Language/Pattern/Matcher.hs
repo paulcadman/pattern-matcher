@@ -4,6 +4,7 @@ module Language.Pattern.Matcher where
 
 import Control.Monad
 import Data.Foldable
+import Data.List             (sortOn, transpose)
 import Data.List.NonEmpty    (NonEmpty (..))
 import Data.Maybe
 import Data.Ord
@@ -12,36 +13,43 @@ import Language.Pattern.Skel
 
 data Matcher m ident tag pat expr =
   Matcher { deconstruct         :: pat -> m [Skel ident tag pat]
-          , match               :: pat -> expr -> m expr
-          , wildPat             :: pat
-          , tagExpr             :: tag -> m expr
-          , heuristic           :: expr -> [pat] -> Int
-          , handleNonExhaustive :: m (Tree tag pat expr)
+          , select              :: Cons ident tag pat -> expr -> m [expr]
+          , heuristic           :: expr -> [Skel ident tag pat] -> m Int
+          , handleNonExhaustive :: [Skel ident tag pat]
+                                -> m (Tree ident tag pat expr)
           , handleRedundant     :: m ()
           }
 
 type Index = Int
 
-data Tree tag pat expr = Fail
-                       | Leaf Index
-                       | Switch expr [Branch tag pat expr]
+data Tree ident tag pat expr = Fail
+                             | Leaf Index
+                             | Switch expr [Branch ident tag pat expr]
+                                           (Maybe (DefaultBranch ident tag pat expr))
 
-data Branch tag pat expr = Branch tag (Tree tag pat expr)
+data Branch ident tag pat expr =
+  Branch tag [(ident, expr)] (Tree ident tag pat expr)
+
+data DefaultBranch ident tag pat expr =
+  DefaultBranch [(ident, expr)] (Tree ident tag pat expr)
 
 data Row ident tag pat = Row [Skel ident tag pat] Index
 
 type Matrix ident tag pat = [Row ident tag pat]
 
-columnView :: Matrix ident tag pat -> [[pat]]
+columnView :: Matrix ident tag pat -> [[Skel ident tag pat]]
 columnView [] = repeat []
 columnView (Row ps _ : rows) = zipWith (:) ps cols
   where cols = columnView rows
 
+rowView :: [[Skel ident tag pat]] -> [Index] -> Matrix ident tag pat
+rowView ss = zipWith Row (transpose ss)
+
 catNewRows :: Foldable f
            => Index
-           -> f (Maybe [pat])
-           -> Matrix pat
-           -> Matrix pat
+           -> f (Maybe [Skel ident tag pat])
+           -> Matrix ident tag pat
+           -> Matrix ident tag pat
 catNewRows out nrows matrix =
   foldr (\nrow rows ->
            case nrow of
@@ -51,37 +59,34 @@ catNewRows out nrows matrix =
 specialize :: ( Eq tag
               , Monad m
               )
-           => Matcher m tag pat expr
-           -> Skel tag pat
-           -> Matrix pat
-           -> m (Matrix pat)
-specialize _ _ [] = pure []
-specialize _ _ rs@(Row [] _ : _) = pure rs
-specialize matcher skel@(Skel _ skelTag sps) (Row (p : ps) out : rows) = do
-  skelsp <- deconstruct matcher p
-  let nrow skelp =
-        case skelp of
-          Nothing -> Just (replicate (skelArity skel) (wildPat matcher) ++ ps)
-          Just (Skel _ consTag subp)
-            | consTag == skelTag -> Just (sps ++ ps)
-            | otherwise -> Nothing
-  rows <- specialize matcher skel rows
-  pure (catNewRows out (fmap nrow skelsp) rows)
+           => Matcher m ident tag pat expr
+           -> Cons ident tag pat
+           -> Matrix ident tag pat
+           -> Matrix ident tag pat
+specialize _ _ rs@(Row [] _ : _) = rs
+specialize matcher cons@(Cons tag consSubs) matrix = foldr go [] matrix
+  where go (Row (p : ps) out) rows =
+          case skelDesc p of
+            ConsSkel (Cons consTag subps)
+              | tag == consTag ->
+                  Row (subps ++ ps) out : rows
+              | otherwise ->
+                  rows
+            WildSkel _ ->
+              Row (fmap (\skel -> skel { skelDesc = WildSkel Nothing }) consSubs ++ ps) out : rows
+        go (Row [] _) _ = error "Unexpected empty row in specialize"
 
 defaultMatrix :: Monad m
-              => Matcher m tag pat expr
-              -> Matrix pat
-              -> m (Matrix pat)
-defaultMatrix _ [] = pure []
-defaultMatrix _ rs@(Row [] _ : _) = pure rs
-defaultMatrix matcher (Row (p : ps) out : rows) = do
-  skelsp <- deconstruct matcher p
-  let nrow skelp =
-        case skelp of
-          Nothing -> Just (Row ps out)
-          Just _  -> Nothing
-  rows <- defaultMatrix matcher rows
-  pure (foldr (maybe id (:)) rows (fmap nrow skelsp))
+              => Matcher m ident tag pat expr
+              -> Matrix ident tag pat
+              -> Matrix ident tag pat
+defaultMatrix _ rs@(Row [] _ : _) = rs
+defaultMatrix matcher matrix = foldr go [] matrix
+  where go (Row (p : ps) out) rows =
+          case skelDesc p of
+            WildSkel {} -> Row ps out : rows
+            ConsSkel {} -> rows
+        go (Row [] _) _ = error "Unexpected empty row in defaultMatrix"
 
 swapFront :: Int -> [a] -> [a]
 swapFront n _ | n < 0 = error "The index selected \
@@ -95,13 +100,13 @@ swapFront n ps = p' : ps'
         (p', ps') = go n ps
 
 headConstructorSet :: Foldable f
-                   => f (Maybe (Skel tag pat))
+                   => f (Skel ident tag pat)
                    -> [tag]
 headConstructorSet =
   foldr (\mc cs ->
-           case mc of
-             Nothing           -> cs
-             Just (Skel _ t _) -> t : cs) []
+           case skelDesc mc of
+             WildSkel _          -> cs
+             ConsSkel (Cons t _) -> t : cs) []
 
 splitBy :: (a -> Either p q) -> [a] -> ([p], [q])
 splitBy _ [] = ([],[])
@@ -121,39 +126,45 @@ filterMap func =
 compileMatrix :: ( Monad m
                  , Eq tag
                  )
-              => Matcher m tag pat expr
+              => Matcher m ident tag pat expr
               -> [expr]
-              -> Matrix pat
-              -> m (Tree tag pat expr)
+              -> Matrix ident tag pat
+              -> m (Tree ident tag pat expr)
 compileMatrix matcher occ [] = pure Fail
 compileMatrix matcher occ matrix@(Row ps out : ors) = do
-  flattenedRow <- traverse (deconstruct matcher) ps
-  let headConses = concatMap headConstructorSet flattenedRow
+  let headConses = headConstructorSet ps
   -- Check if there is any pattern that is not a wildcard in the top
   -- row of the matrix.
-  case headConses of
-    [] -> do
-      -- If all patterns are wildcards (or if the line is empty) on
-      -- the top row then the matching always succeeds. If there
-      -- remains some lines in the matrix, these lines are redundant
-      unless (null ors) (handleRedundant matcher)
-      pure (Leaf out)
-    _ : _ -> do
-      -- If some patterns don't have a wildcard, we must shuffle the
-      -- columns of the matrix to find the one with the highest score
-      -- given by the heuristic function.
-      let idx =
-            fst $ maximumBy (comparing snd) $
-            zip [0..] (zipWith (heuristic matcher) occ (columnView matrix))
-          Row (p : ps) out : ors =
-            fmap (\(Row ps out) -> Row (swapFront idx ps) out) matrix
-          shuffledOcc =
-            swapFront idx occ
+  if null headConses
+    then do
+    -- If all patterns are wildcards (or if the line is empty) on the
+    -- top row then the matching always succeeds. If there remains
+    -- some lines in the matrix, these lines are redundant
+    unless (null ors) (handleRedundant matcher)
+    pure (Leaf out)
+    else do
+    -- If some patterns don't have a wildcard, we must shuffle the
+    -- columns of the matrix to find the one with the highest score
+    -- given by the heuristic function.
+    let indexList = fmap (\(Row _ out) -> out) matrix
+        columns = columnView matrix
+        colExpr = zip3 headConses columns occ
+    taggedScores <-
+      traverse (\(hcs, pats, exp) ->
+                   case hcs of
+                     [] -> pure (maxBound, pats, exp)
+                     _ : _ -> do
+                       score <- heuristic matcher exp pats
+                       pure (score, pats, exp)) undefined --colExpr
+
+    let (sortedColumns@(firstColumn : _), occ1 : occs) =
+          unzip $ (\(_, pats, exp) -> (pats, exp)) <$>
+          sortOn (\(score, _, _) -> score) taggedScores
+
+        -- We assume the ranges for tags is an invariant of a column
+        tagRange = skelRange $ head firstColumn
+
+        matchedTags = undefined
 
 
-
-      -- skelIdx <- select matcher (p :| nwps)
-      -- let selPat : opats = swapFront skelIdx ps
-      --     selOcc : occs = swapFront skelIdx occ
-
-      pure undefined
+    pure undefined
