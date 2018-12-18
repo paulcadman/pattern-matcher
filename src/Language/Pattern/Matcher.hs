@@ -164,6 +164,14 @@ compileMatrix matcher occ matrix@(Row ps out : ors) = do
         -- We assume the ranges for tags is an invariant of a column
         tagRange = skelRange $ head firstColumn
 
+    revBranches <-
+      foldM (\(unmatched, branches) skel ->
+               case skelDesc skel of
+                 ConsSkel cons@(Cons tag _) -> do
+
+                 WildSkel mid ->
+
+
         matchedTags = undefined
 
 
