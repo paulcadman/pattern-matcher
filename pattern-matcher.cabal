@@ -18,7 +18,7 @@ cabal-version:       >=1.10
 library
   exposed-modules:     Language.Pattern.Matcher
                      , Language.Pattern.Skel
-                     , Language.Pattern.Matcher.Heuristic
+                     , Language.Pattern.Heuristics
   -- other-modules:
   -- other-extensions:
   build-depends:       base >=4.12 && <4.13
