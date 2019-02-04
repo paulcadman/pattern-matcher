@@ -6,4 +6,4 @@ import Test.QuickCheck
 
 
 main :: IO ()
-main = quickCheck semanticPreservation
+main = quickCheck (withMaxSuccess 10000 semanticPreservation)

@@ -3,13 +3,15 @@
 module Calculus where
 
 import           Language.Pattern.Heuristics (noHeuristic)
-import           Language.Pattern.Matcher    (Skel (..), SkelDesc (..))
+import           Language.Pattern.Matcher    (Skel (..))
 import qualified Language.Pattern.Matcher    as Matcher
 
 import           Control.Applicative         hiding (Const)
+import           Control.Arrow               (second)
 import           Control.Monad.Identity
 import           Data.Map                    (Map)
 import qualified Data.Map                    as M
+import qualified Data.Set                    as S
 import           Data.Text.Prettyprint.Doc
 import           Test.QuickCheck             hiding (Result)
 
@@ -37,7 +39,9 @@ instance Pretty ExprDesc where
   pretty (Cons e es)        = parens (pretty e <+> "::" <+> pretty es)
   pretty (Match e branches) = prettyMatch e branches
     where prettyMatch e branches =
-            vsep (("match" <+> pretty e <+> "with") : fmap prettyBr branches)
+            vsep [ "match" <+> pretty e <+> "with"
+                 , indent 2 (vsep (fmap prettyBr branches))
+                 ]
           prettyBr (pat, expr) =
             "|" <+> pretty pat <+> "->" <+> pretty expr
 
@@ -112,35 +116,50 @@ consPat typ p ps = pat typ (PCons p ps)
 nilPat :: Typ -> Pat
 nilPat typ = pat typ PNil
 
+envOfPat :: Pat -> Map Var Typ
+envOfPat pat =
+  case patDesc pat of
+    PVar v     -> [(v, patTyp pat)]
+    PWild      -> []
+    PConst _   -> []
+    PNil       -> []
+    PCons p ps -> envOfPat p `M.union` envOfPat ps
+    POr p p'   -> envOfPat p `M.union` envOfPat p'
+
 ---------------------------------------------------------------------------
 -- Simple tree walking interpreter
 ---------------------------------------------------------------------------
 
+data EvalErr = NotInScope Var
+             | PatternFail
+             deriving(Eq, Show)
+
 data Result = IntRes Int
             | NilRes
             | ConsRes Result Result
-            deriving(Eq)
+            deriving(Eq, Show)
 
-instanceOf :: Pat -> Result -> Maybe [(Var, Result)]
+instanceOf :: Pat -> Result -> Either EvalErr (Map Var Result)
 instanceOf pat res =
   case (patDesc pat, res) of
-    (PWild, _) -> Just []
-    (PVar v, _) -> Just [(v, res)]
-    (PConst i, IntRes j) | i == j -> Just []
-    (PNil, NilRes) -> Just []
+    (PWild, _) -> Right []
+    (PVar v, _) -> Right [(v, res)]
+    (PConst i, IntRes j) | i == j -> Right []
+    (PNil, NilRes) -> Right []
     (PCons p ps, ConsRes e es) -> do
       i <- p `instanceOf` e
       is <- ps `instanceOf` es
-      pure (i ++ is)
-    (POr p p', _) -> p `instanceOf` res <|> p' `instanceOf` res
-    (_, _) -> Nothing
+      pure (i `M.union` is)
+    (POr p p', _) ->
+      either (const (p' `instanceOf` res)) Right (p `instanceOf` res)
+    (_, _) -> Left PatternFail
 
-eval :: Map Var Result -> Expr -> Maybe Result
+eval :: Map Var Result -> Expr -> Either EvalErr Result
 eval env expr =
   case exprDesc expr of
-    Const i -> Just (IntRes i)
-    Var v -> M.lookup v env
-    Nil -> Just NilRes
+    Const i -> Right (IntRes i)
+    Var v -> maybe (Left (NotInScope v)) Right (M.lookup v env)
+    Nil -> Right NilRes
     Cons e es -> do
       r <- eval env e
       rs <- eval env es
@@ -150,9 +169,9 @@ eval env expr =
       (bds, e) <-
         foldr (\(p, e) sel ->
                  case p `instanceOf` r of
-                   Nothing  -> sel
-                   Just bds -> Just (bds, e)) Nothing brs
-      let env' = foldr (\(i, r) env -> M.insert i r env) env bds
+                   Left _    -> sel
+                   Right bds -> Right (bds, e)) (Left PatternFail) brs
+      let env' = bds `M.union` env
       eval env' e
 
 ---------------------------------------------------------------------------
@@ -166,6 +185,11 @@ data Tag = IntTag Int
          | ListTag ListTag
          deriving(Eq, Ord, Show)
 
+instance Pretty Tag where
+  pretty (IntTag i)        = "Int#" <> pretty i
+  pretty (ListTag NilTag)  = "[]"
+  pretty (ListTag ConsTag) = "_::_"
+
 rangeOf :: Typ -> [Tag]
 rangeOf TInt      = fmap IntTag [minBound..maxBound]
 rangeOf (TList _) = listRange
@@ -174,29 +198,18 @@ listRange :: [Tag]
 listRange = [ListTag NilTag, ListTag ConsTag]
 
 wildSkel :: Typ -> Maybe Var -> Skel Var Tag Pat
-wildSkel typ var =
-  Skel { skelDesc = WildSkel var
-       , skelRange = rangeOf typ
-       }
+wildSkel typ = WildSkel (rangeOf typ)
 
 intSkel :: Int -> Skel Var Tag Pat
-intSkel i = Skel { skelDesc = ConsSkel (Matcher.cons (IntTag i) [])
-                 , skelRange = rangeOf TInt
-                 }
+intSkel i = ConsSkel (rangeOf TInt) (Matcher.cons (IntTag i) [])
 
 nilSkel :: Skel Var Tag Pat
-nilSkel = Skel { skelDesc = ConsSkel (Matcher.cons (ListTag NilTag) [])
-               , skelRange = listRange
-               }
+nilSkel = ConsSkel listRange (Matcher.cons (ListTag NilTag) [])
 
 consSkel :: Matcher.Skel Var Tag Pat
          -> Matcher.Skel Var Tag Pat
          -> Matcher.Skel Var Tag Pat
-consSkel p ps =
-  Skel { skelDesc = ConsSkel cons
-       , skelRange = listRange
-       }
-  where cons = Matcher.cons (ListTag ConsTag) [p, ps]
+consSkel p ps = ConsSkel listRange (Matcher.cons (ListTag ConsTag) [p, ps])
 
 deconstruct :: Pat -> [Matcher.Skel Var Tag Pat]
 deconstruct pat =
@@ -211,7 +224,7 @@ deconstruct pat =
       pure (consSkel p ps)
     POr p p'   -> deconstruct p ++ deconstruct p'
 
-matcher :: Matcher.Matcher Identity Var Tag Pat Expr
+matcher :: Matcher.Matcher Identity Var Tag Pat SExpr
 matcher =
   Matcher.Matcher { Matcher.deconstruct = pure . deconstruct
                   , Matcher.heuristic = \idx skl -> pure (noHeuristic idx skl)
@@ -224,18 +237,42 @@ data SExpr = SConst Int
            | SSel SExpr Tag Int
            | SMatch Tree
 
+instance Pretty SExpr where
+  pretty (SConst i) = pretty i
+  pretty (SVar (MkVar v)) = pretty v
+  pretty SNil = "[]"
+  pretty (SCons e es) = "(" <> pretty e <+> "::" <+> pretty es <> ")"
+  pretty (SSel e t idx) =
+    "(" <> pretty e <> parens (pretty t <+> ":" <+> pretty idx) <> ")"
+  pretty (SMatch tree) =
+    "match" <+> braces (pretty tree)
+
 data Tree = Fail
-          | Leaf [(Var, SExpr)] SExpr
+          | Leaf [(Maybe Var, SExpr)] SExpr
           | Switch SExpr [(Tag, Tree)] (Maybe Tree)
 
-compileSel :: Matcher.Select Expr Tag -> SExpr
-compileSel (Matcher.NoSel e)       = compile e
+instance Pretty Tree where
+  pretty Fail = "Fail"
+  pretty (Leaf bds out) =
+    vsep (fmap (\(var, e) ->
+                  "let" <+> pv var <+> "=" <+> pretty e <+> "in") bds ++
+          ["leaf" <+> pretty out])
+    where pv Nothing          = "_"
+          pv (Just (MkVar v)) = pretty v
+  pretty (Switch expr branches def) =
+    vsep ([ "match" <+> pretty expr <+> "with" ] ++
+          fmap (\(tag, tree) -> pretty tag <+> "=>" <+> braces (pretty tree)) branches ++
+          [ maybe "" (\tree -> "_ =>" <+> pretty tree) def ])
+
+
+compileSel :: Matcher.Select SExpr Tag -> SExpr
+compileSel (Matcher.NoSel e)       = e
 compileSel (Matcher.Sel e tag idx) = SSel (compileSel e) tag idx
 
-compileTree :: Matcher.DecTree Var Tag Pat Expr Expr -> Tree
+compileTree :: Matcher.DecTree Var Tag Pat SExpr SExpr -> Tree
 compileTree Matcher.Fail = Fail
 compileTree (Matcher.Leaf bindings out _) =
-  Leaf (fmap (\(v Matcher.:= e) -> (v, compileSel e)) bindings) (compile out)
+  Leaf (fmap (\(v Matcher.:= e) -> (v, compileSel e)) bindings) out
 compileTree (Matcher.Switch expr branches def) =
   Switch (compileSel expr)
          (M.toList (fmap compileTree branches))
@@ -249,12 +286,13 @@ compile expr =
     Nil -> SNil
     Cons e es -> SCons (compile e) (compile es)
     Match e brs -> SMatch (compileTree decTree)
-      where Identity decTree = Matcher.match matcher e brs
+      where Identity decTree =
+              Matcher.match matcher (compile e) (fmap (second compile) brs)
 
-evalSExpr :: Map Var Result -> SExpr -> Maybe Result
-evalSExpr env (SConst i) = Just (IntRes i)
-evalSExpr env (SVar v) = M.lookup v env
-evalSExpr env SNil = Just NilRes
+evalSExpr :: Map Var Result -> SExpr -> Either EvalErr Result
+evalSExpr env (SConst i) = Right (IntRes i)
+evalSExpr env (SVar v) = maybe (Left (NotInScope v)) Right (M.lookup v env)
+evalSExpr env SNil = Right NilRes
 evalSExpr env (SCons e es) = do
   r <- evalSExpr env e
   rs <- evalSExpr env es
@@ -262,16 +300,19 @@ evalSExpr env (SCons e es) = do
 evalSExpr env (SSel se tag idx) = do
   r <- evalSExpr env se
   case (r, tag) of
-    (ConsRes i is, ListTag ConsTag) | idx == 0 -> Just i
-                                    | idx == 1 -> Just is
-    _ -> Nothing
+    (ConsRes i is, ListTag ConsTag) | idx == 0 -> Right i
+                                    | idx == 1 -> Right is
+    _ -> Left PatternFail
 evalSExpr env (SMatch tree) = evalTree env tree
-  where evalTree env Fail = Nothing
+  where evalTree env Fail = Left PatternFail
         evalTree env (Leaf bindings sexpr) = do
           env' <-
             foldM (\env' (v, se) -> do
                       r <- evalSExpr env se
-                      pure (M.insert v r env')) env bindings
+                      pure $
+                        case v of
+                          Nothing -> env'
+                          Just v  -> M.insert v r env') env bindings
           evalSExpr env' sexpr
         evalTree env (Switch sexpr branches def) = do
           r <- evalSExpr env sexpr
@@ -279,24 +320,63 @@ evalSExpr env (SMatch tree) = evalTree env tree
               matches (ListTag NilTag) NilRes         = True
               matches (ListTag ConsTag) (ConsRes _ _) = True
               matches _ _                             = False
-          tree <- foldr (\(tag, tree) sel ->
-                           if tag `matches` r
-                           then Just tree
-                           else sel) def branches
-          evalTree env tree
+          case foldr (\(tag, tree) sel ->
+                         if tag `matches` r
+                         then Just tree
+                         else sel) def branches of
+            Nothing   -> Left PatternFail
+            Just tree -> evalTree env tree
 
 ---------------------------------------------------------------------------
 -- Quick check testing
 ---------------------------------------------------------------------------
 
-semanticPreservation :: Expr -> Bool
+semanticPreservation :: Expr -> Property
 semanticPreservation expr =
-  eval [] expr == evalSExpr [] (compile expr)
+  eval [] expr === evalSExpr [] (compile expr)
 
 instance Arbitrary Expr where
   arbitrary = sized $ \size -> do
-    typ <- genTyp size
+    typ <- genTyp (size `div` 10)
     wellFormedExpr size [] typ
+
+  shrink expr =
+    case exprDesc expr of
+      Cons e es ->
+        case typ of
+          TList typ -> [nil typ, es]
+          TInt      -> err
+      Var _ -> [simplest typ]
+      Match expr branches -> shrinkedMatch ++ shrinkedBranches
+        where shrinkedMatch = do
+                expr <- shrink expr
+                pure Expr { exprDesc = Match expr branches
+                          , exprTyp = exprTyp expr
+                          }
+              shrinkedBranches =
+                fmap (\(p, e) -> removeVars (M.keysSet (envOfPat p)) e) branches
+      _ -> []
+    where err = error "Ill-typed expression has been generated"
+          typ = exprTyp expr
+          simplest TInt        = intConst 0
+          simplest (TList typ) = nil typ
+          removeVars vars expr =
+            case exprDesc expr of
+              Var v | v `S.member` vars -> simplest (exprTyp expr)
+                    | otherwise -> expr
+              Const _ -> expr
+              Nil -> expr
+              Cons e es ->
+                case typ of
+                  TList typ -> listCons typ (removeVars vars e) (removeVars vars es)
+                  TInt      -> err
+              Match e branches ->
+                Expr { exprDesc = Match (removeVars vars e)
+                                        (fmap (removeVarsInBranch vars) branches)
+                     , exprTyp = exprTyp expr
+                     }
+                where removeVarsInBranch vars (pat, expr) =
+                        (pat, removeVars (vars S.\\ M.keysSet (envOfPat pat)) expr)
 
 genTyp :: Int -> Gen Typ
 genTyp size | size <= 0 = pure TInt
@@ -332,7 +412,7 @@ genMatch size env etyp = do
   ptyp <- genTyp (size `div` 2)
   expr <- wellFormedExpr (size `div` 2) env ptyp
   branches <-
-    replicateM (max 1 (size `div` 4)) (wellFormedBranches (size `div` 2) env ptyp etyp)
+    replicateM (size `div` 2) (wellFormedBranches (size `div` 2) env ptyp etyp)
   pure Expr { exprDesc = Match expr branches
             , exprTyp = etyp
             }
@@ -363,13 +443,5 @@ wellFormedPat size typ@TInt =
 wellFormedBranches :: Int -> Map Var Typ -> Typ -> Typ -> Gen (Pat, Expr)
 wellFormedBranches size env ptyp etyp = do
   pat <- wellFormedPat (size `div` 2) ptyp
-  let envOfPat pat =
-        case patDesc pat of
-          PVar v     -> [(v, patTyp pat)]
-          PWild      -> []
-          PConst _   -> []
-          PNil       -> []
-          PCons p ps -> envOfPat p `M.union` envOfPat ps
-          POr p p'   -> envOfPat p `M.union` envOfPat p'
   expr <- wellFormedExpr (size `div` 2) (envOfPat pat `M.union` env) etyp
   pure (pat, expr)

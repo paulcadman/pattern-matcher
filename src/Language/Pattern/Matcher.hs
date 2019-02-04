@@ -57,7 +57,7 @@ data DecTree ident tag pat expr out =
            , switchCatchAll :: Maybe (DecTree ident tag pat expr out)
            }
 
-data Binding ident expr = ident := expr
+data Binding ident expr = Maybe ident := expr
                         deriving(Eq, Ord, Show)
 
 data Row ident tag pat expr out =
@@ -124,7 +124,7 @@ consMaybe mx xs = foldr (:) xs mx
 
 generalizeSkel :: Skel ident tag pat
                -> Skel ident tag pat
-generalizeSkel skel = skel { skelDesc = WildSkel Nothing }
+generalizeSkel skel = WildSkel (skelRange skel) Nothing
 
 specialize :: Eq tag
            => Select expr tag
@@ -132,14 +132,14 @@ specialize :: Eq tag
            -> Matrix ident tag pat expr out
            -> Matrix ident tag pat expr out
 specialize _ _ rs@(Row _ [] _ : _) = rs
-specialize expr cons@(Cons tag consSubs) matrix = mapMaybe go matrix
+specialize expr (Cons tag consSubs) matrix = mapMaybe go matrix
   where go (Row bds (p : ps) out) =
-          case skelDesc p of
-            ConsSkel (Cons consTag subps)
+          case p of
+            ConsSkel _ (Cons consTag subps)
               | tag == consTag -> Just (Row bds (subps ++ ps) out)
               | otherwise -> Nothing
-            WildSkel mid ->
-              Just $ Row (consMaybe (fmap (:= expr) mid) bds)
+            WildSkel _ mid ->
+              Just $ Row (mid := expr : bds)
                          (fmap generalizeSkel consSubs ++ ps)
                          out
         go (Row _ [] _) = error "Unexpected empty row in specialize"
@@ -150,9 +150,9 @@ defaultMatrix :: Select expr tag
 defaultMatrix _ rs@(Row _ [] _ : _) = rs
 defaultMatrix expr matrix = mapMaybe go matrix
   where go (Row bds (p : ps) out) =
-          case skelDesc p of
-            WildSkel mid ->
-              Just (Row (consMaybe (fmap (:= expr) mid) bds) ps out)
+          case p of
+            WildSkel _ mid ->
+              Just (Row (mid := expr : bds) ps out)
             ConsSkel {} ->
               Nothing
         go (Row _ [] _) = error "Unexpected empty row in defaultMatrix"
@@ -193,23 +193,14 @@ shuffleBy heuristic exprVec matrix = do
       sortedMatrix = horizontalView sortedVertMatrix
   pure (sortedExprVec, sortedMatrix)
 
-headRowConstructorSet :: Ord tag
-                      => Matrix ident tag pat expr out
-                      -> Set tag
-headRowConstructorSet =
-  foldr (\(Row _ (p : ps) _) set ->
-            case skelDesc p of
-              ConsSkel (Cons t _) -> S.insert t set
-              WildSkel _          -> []) []
-
 headConstructors :: Foldable f
                  => f (Skel ident tag pat)
                  -> [Cons ident tag pat]
 headConstructors =
   foldr (\mc cs ->
-           case skelDesc mc of
-             WildSkel _    -> cs
-             ConsSkel cons -> cons : cs) []
+           case mc of
+             WildSkel {}     -> cs
+             ConsSkel _ cons -> cons : cs) []
 
 -- | Compile a matrix of patterns into a decision tree
 compileMatrix :: ( Monad m
@@ -219,7 +210,7 @@ compileMatrix :: ( Monad m
               -> [Select expr tag]
               -> Matrix ident tag pat expr out
               -> m (DecTree ident tag pat expr out)
-compileMatrix matcher occs [] = pure Fail
+compileMatrix _ _ [] = pure Fail
 compileMatrix matcher occs matrix@(Row bds ps out : ors) = do
   let headConses = headConstructors ps
   -- Check if there is any pattern that is not a wildcard in the top
@@ -232,7 +223,11 @@ compileMatrix matcher occs matrix@(Row bds ps out : ors) = do
     let redundant
           | null ors = Nothing
           | otherwise = Just ors
-    pure (Leaf bds out redundant)
+        bindingsIn occ skel =
+          case skel of
+            WildSkel _ mid -> mid := occ
+            ConsSkel {}    -> error "Contradiction"
+    pure (Leaf (zipWith bindingsIn occs ps ++ bds) out redundant)
     else do
     -- If some patterns don't have a wildcard, we must shuffle the
     -- columns of the matrix to find the one with the highest score
