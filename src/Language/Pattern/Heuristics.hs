@@ -2,8 +2,12 @@
 
 module Language.Pattern.Heuristics where
 
+import           Data.List             ((\\))
 import qualified Data.Set              as S
 import           Language.Pattern.Skel
+
+noHeuristic :: expr -> [Skel ident tag pat] -> Int
+noHeuristic _ _ = 0
 
 -- | This heuristic favours columns whose top pattern is a generalized constructor pattern. If the first pattern is a wildcard, the heuristic gives \(0\) and \(1\) otherwise.
 firstRow :: expr -> [Skel ident tag pat] -> Int
@@ -22,14 +26,14 @@ smallDefault _ =
 smallBranchingFactor :: Ord tag => expr -> [Skel ident tag pat] -> Int
 smallBranchingFactor _ [] = -1
 smallBranchingFactor _ column@(skel : skels) =
-  if S.null (range S.\\ headConsSet)
+  if null (range \\ headConsSet)
   then - length headConsSet
   else - length headConsSet - 1
   where range = skelRange skel
         headConsSet =
           foldr (\skel consSet ->
                    case skelDesc skel of
-                     ConsSkel (Cons tag _) -> S.insert tag consSet
+                     ConsSkel (Cons tag _) -> tag : consSet
                      WildSkel _            -> consSet) [] column
 
 -- | The sum of the arity of the constructors of this column, negated.
