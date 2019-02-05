@@ -1,4 +1,4 @@
-{-# LANGUAGE DataKinds, OverloadedLists, PatternSynonyms, TypeOperators #-}
+{-# LANGUAGE OverloadedLists #-}
 
 module Language.Pattern.Matcher ( module Language.Pattern.Skel
                                 , Select(..)
@@ -15,8 +15,6 @@ import           Data.Map              (Map)
 import qualified Data.Map              as M
 import           Data.Maybe
 import           Data.Ord
-import           Data.Set              (Set)
-import qualified Data.Set              as S
 
 import           Language.Pattern.Skel
 
@@ -79,24 +77,11 @@ colPatterns (Col ps) = ps
 
 type Matrix ident tag pat expr out = [Row ident tag pat expr out]
 
-matrixWellFormed :: Matrix ident tag pat expr out -> Bool
-matrixWellFormed matrix = all ((== length (head rows)) . length) rows
-  where rows = fmap rowPatterns matrix
-
 data VMatrix ident tag pat expr out =
   VMatrix { matrixColumns  :: [Col ident tag pat]
           , matrixOut      :: [out]
           , matrixBindings :: [[Binding ident (Select expr tag)]]
           }
-
-vmatrixWellFormed :: VMatrix ident tag pat expr out -> Bool
-vmatrixWellFormed VMatrix { matrixColumns = cols
-                          , matrixOut = outs
-                          , matrixBindings = bds
-                          } =
-  length cols == length outs &&
-  length cols == length bds  &&
-  all ((== length (colPatterns (head cols))) . length . colPatterns) cols
 
 verticalView :: Matrix ident tag pat expr out
              -> VMatrix ident tag pat expr out
@@ -118,9 +103,6 @@ horizontalView VMatrix { matrixColumns = cols
 headColumn :: Matrix ident tag pat expr out
            -> Col ident tag pat
 headColumn = head . matrixColumns . verticalView
-
-consMaybe :: Maybe a -> [a] -> [a]
-consMaybe mx xs = foldr (:) xs mx
 
 generalizeSkel :: Skel ident tag pat
                -> Skel ident tag pat
@@ -162,7 +144,8 @@ swapFront n _ | n < 0 = error "The index selected \
                               \by the pattern matching \
                               \heuristic cannot be negative"
 swapFront n ps = p' : ps'
-  where go 0 (p : ps) = (p, ps)
+  where go _ [] = error "Trying to swap a column past the end of the list"
+        go 0 (p : ps) = (p, ps)
         go n (p : ps) = (p', p : ps')
           where (p', ps') = go (n - 1) ps
 

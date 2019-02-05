@@ -1,10 +1,15 @@
--- |
+-- | A pattern skeleton reduces a pattern to a single information,
+-- whether it filters a particular set of expressions (constructors)
+-- or whether it filters none.
 
-module Language.Pattern.Skel ( Cons(..)
-                             , cons
-                             , Skel(..)
-                             , skelRange
-                             ) where
+module Language.Pattern.Skel (
+  -- * Constructors
+  Cons(..)
+  , cons
+  -- * Skeletons
+  , Skel(..)
+  , skelRange
+  ) where
 
 -- | A generic constructor descriptor. Carries a @tag@ identifying it.
 --
@@ -39,6 +44,7 @@ data Skel ident tag pat = WildSkel [tag] (Maybe ident)
                           -- /Invariant/: the tag of the constructor must be in
                           -- the range of tags supplied with the skeleton.
 
+-- | Extract the range of tags for a skeleton.
 skelRange :: Skel ident tag pat -> [tag]
 skelRange (ConsSkel range _) = range
 skelRange (WildSkel range _) = range
