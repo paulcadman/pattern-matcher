@@ -9,6 +9,10 @@ module Language.Pattern.Skel (
   -- * Skeletons
   , Skel(..)
   , skelRange
+  -- * Utility functions
+  , isWildSkel
+  , isConsSkel
+  , generalizeSkel
   ) where
 
 -- | A generic constructor descriptor. Carries a @tag@ identifying it.
@@ -48,3 +52,15 @@ data Skel ident tag pat = WildSkel [tag] (Maybe ident)
 skelRange :: Skel ident tag pat -> [tag]
 skelRange (ConsSkel range _) = range
 skelRange (WildSkel range _) = range
+
+isWildSkel :: Skel ident tag pat -> Bool
+isWildSkel WildSkel {} = True
+isWildSkel ConsSkel {} = False
+
+isConsSkel :: Skel ident tag pat -> Bool
+isConsSkel ConsSkel {} = True
+isConsSkel WildSkel {} = False
+
+generalizeSkel :: Skel ident tag pat
+               -> Skel ident tag pat
+generalizeSkel skel = WildSkel (skelRange skel) Nothing

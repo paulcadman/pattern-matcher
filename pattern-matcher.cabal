@@ -16,10 +16,10 @@ extra-source-files:  CHANGELOG.md
 cabal-version:       >=1.10
 
 library
-  exposed-modules:     Language.Pattern.Matcher
+  exposed-modules:     Language.Pattern.Compiler
                      , Language.Pattern.Skel
                      , Language.Pattern.Heuristics
-  -- other-modules:
+  other-modules:       Language.Pattern.Matrix
   -- other-extensions:
   build-depends:       base >=4.12 && <4.13
                      , containers
