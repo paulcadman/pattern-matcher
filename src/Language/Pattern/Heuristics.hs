@@ -71,6 +71,9 @@ module Language.Pattern.Heuristics ( Heuristic(..)
                                    -- $expensive
                                    , leafEdge
                                    , fewerChildRule
+                                   -- ** Necessity based heuristics
+                                   --
+                                   -- $necessity
                                    -- * Pseudo heuristics
                                    --
                                    -- $pseudo
@@ -181,9 +184,45 @@ fewerChildRule = Score score
                 score = - sum (fmap length specializedMatrices)
 
 -- ** Necessity based heuristics
---
---
 
+-- necessity A column \(i\) is deemed necessary for row \(j\) when all
+-- paths to the output of \(j\) in all possible decision trees
+-- resulting in the compilation of the matrix tests occurence \(i\). A
+-- column \(i\) is necessary if it is necessary for all the rows.
+--
+-- It seems sensible to favour useful columns over non-useful ones as,
+-- by definition a useful column will be tested in all paths, whether
+-- we choose it or not. Choosing it might however result in shorter
+-- paths.
+--
+-- Necessity (that we reduced to usefulness) is computed according to
+-- the algorithm in section 3 of «
+-- [http://moscova.inria.fr/~maranget/papers/warn/warn.pdf](Warnings
+-- for pattern matching) ».
+
+useful :: Eq tag
+       => Matrix ident tag pat expr out
+       -> Col ident tag pat
+       -> Bool
+useful (Row _ [] _ : _) _ = False
+useful [] _               = True
+useful matrix@(Row _ (q1 : _) _ : _) col =
+  case q1 of
+    ConsSkel _ cons ->
+      useful (specialize undefined cons matrix) (specializedCol cons col)
+    WildSkel {}
+      | isSignature headColConses (skelRange q1) ->
+          any (\cons -> useful (specialize undefined cons matrix)
+                               (specializedCol cons col)) headColConses
+      | otherwise ->
+          useful (defaultMatrix undefined matrix) (Col defCol)
+  where headColConses = columnConstructors (headColumn matrix)
+        defaultCol (Col col) =
+          where [Row _ defCol _] =
+                  defaultMatrix undefined [Row undefined col undefined]
+        specializeCol cons (Col col) = Col specCol
+          where [Row _ specCol _] =
+                  specialize undefined cons [Row undefined col undefined]
 -- neededColumns :: ()
 -- neededColumns = ()
 

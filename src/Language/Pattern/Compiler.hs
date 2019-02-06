@@ -135,7 +135,7 @@ compileMatrix matcher occs matrix@(Row bds ps out : ors) = do
     branches <-
       traverse (\(subOccs, matrix) ->
                    compileMatrix matcher (subOccs ++ tail shuffledOccs) matrix)
-               specializedMatrices
+      specializedMatrices
     defaultMatrix <-
       traverse (compileMatrix matcher (tail shuffledOccs)) defaultBranch
     pure (Switch (head shuffledOccs) branches defaultMatrix)

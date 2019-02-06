@@ -8,6 +8,7 @@ import           Data.List             (transpose)
 import           Data.Map              (Map)
 import qualified Data.Map              as M
 import           Data.Maybe
+import           Data.Set              (Set)
 import qualified Data.Set              as S
 
 data Select expr tag = NoSel expr
@@ -68,6 +69,18 @@ horizontalView VMatrix { matrixColumns = cols
 headColumn :: Matrix ident tag pat expr out
            -> Col ident tag pat
 headColumn = head . matrixColumns . verticalView
+
+columnConstructors :: Ord tag
+                   => Col ident tag pat
+                   -> Set (Cons ident tag pat)
+columnConstructors =
+  foldr (\skel sig ->
+           case skel of
+             ConsSkel _ cons -> S.insert cons sig
+             WildSkel {}     -> sig) [] . colPatterns
+
+isSignature :: Ord tag => Set (Cons ident tag pat) -> [tag] -> Bool
+isSignature cons range = null (filter (`S.member` S.map consTag cons) range)
 
 swapFront :: Int -> [a] -> [a]
 swapFront n _ | n < 0 = error "The index selected \

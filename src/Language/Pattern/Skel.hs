@@ -25,6 +25,12 @@ data Cons ident tag pat = Cons { consTag     :: tag
                                , consPayload :: [Skel ident tag pat]
                                }
 
+instance Eq tag => Eq (Cons ident tag pat) where
+  Cons t1 _ == Cons t2 _ = t1 == t2
+
+instance Ord tag => Ord (Cons ident tag pat) where
+  Cons t1 _ `compare` Cons t2 _ = t1 `compare` t2
+
 -- | Helper function to construct a 'Cons'
 cons :: tag -> [Skel ident tag pat] -> Cons ident tag pat
 cons tag payload = Cons { consTag = tag
