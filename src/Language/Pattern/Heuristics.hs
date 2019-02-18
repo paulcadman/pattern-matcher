@@ -69,8 +69,8 @@ module Language.Pattern.Heuristics ( Heuristic(..)
                                    -- * Expensive heuristics
                                    --
                                    -- $expensive
-                                   , leafEdge
-                                   , fewerChildRule
+                                   -- , leafEdge
+                                   -- , fewerChildRule
                                    -- ** Necessity based heuristics
                                    --
                                    -- $necessity
@@ -137,7 +137,7 @@ smallDefault = Score score
 -- | Favours columns resulting in small switches. The score of a column is
 -- the number of branches of the switch resulting of the compilation
 -- (including an eventually default branch), negated.
-smallBranchingFactor :: (Monad m, Ord tag) => Heuristic m ident tag pat expr out
+smallBranchingFactor :: (Monad m, IsTag tag) => Heuristic m ident tag pat expr out
 smallBranchingFactor = Score score
   where score _ _ _ [] = pure (-1)
         score _ _ _ column@(skel : _)
@@ -147,15 +147,15 @@ smallBranchingFactor = Score score
                 headConsSet =
                   foldr (\skel consSet ->
                            case skel of
-                             ConsSkel _ (Cons tag _) -> tag : consSet
-                             WildSkel {}             -> consSet) [] column
+                             ConsSkel (Cons tag _) -> tag : consSet
+                             WildSkel {}           -> consSet) [] column
 
 -- | The sum of the arity of the constructors of this column, negated.
 arity :: Monad m => Heuristic m ident tag pat expr out
 arity = Score score
   where score _ _ _ = pure . sum . fmap contrib
-        contrib (ConsSkel _ (Cons _ subSkels)) = length subSkels
-        contrib WildSkel {}                    = 0
+        contrib (ConsSkel (Cons _ subSkels)) = length subSkels
+        contrib WildSkel {}                  = 0
 
 -- $expensive The following heuristics are deemed expensive as they
 -- require manipulation on the matrix of patterns to compute a score.
@@ -165,23 +165,25 @@ arity = Score score
 -- calculate the specialized matrix for all possible constructors on
 -- this column and count the number of specialized matrix whose first
 -- column is entirely made of wildcards.
-leafEdge :: (Ord tag, Monad m) => Heuristic m ident tag pat expr out
-leafEdge = Score score
-  where score matrix idx expr _ = pure score
-          where specializedMatrices =
-                  allSubMatrices expr (swapColumn idx matrix)
-                score = length (filter (wildCardRow . head) specializedMatrices)
+
+-- leafEdge :: (Ord tag, Monad m) => Heuristic m ident tag pat expr out
+-- leafEdge = Score score
+--   where score matrix idx expr _ = pure score
+--           where specializedMatrices =
+--                   allSubMatrices expr (swapColumn idx matrix)
+--                 score = length (filter (wildCardRow . head) specializedMatrices)
 
 -- | The score is the negation of the total number of rows in decomposed
 -- matrices. This is computed by decomposing the matrix by the column
 -- \(i\) and then calculating the number of rows in the resulting
 -- matrices.
-fewerChildRule :: (Ord tag, Monad m) => Heuristic m ident tag pat expr out
-fewerChildRule = Score score
-  where score matrix idx expr _ = pure score
-          where specializedMatrices =
-                  allSubMatrices expr (swapColumn idx matrix)
-                score = - sum (fmap length specializedMatrices)
+
+-- fewerChildRule :: (Ord tag, Monad m) => Heuristic m ident tag pat expr out
+-- fewerChildRule = Score score
+--   where score matrix idx expr _ = pure score
+--           where specializedMatrices =
+--                   allSubMatrices expr (swapColumn idx matrix)
+--                 score = - sum (fmap length specializedMatrices)
 
 -- ** Necessity based heuristics
 
@@ -200,30 +202,30 @@ fewerChildRule = Score score
 -- [http://moscova.inria.fr/~maranget/papers/warn/warn.pdf](Warnings
 -- for pattern matching) ».
 
-useful :: Eq tag
-       => Matrix ident tag pat expr out
-       -> Col ident tag pat
-       -> Bool
-useful (Row _ [] _ : _) _ = False
-useful [] _               = True
-useful matrix@(Row _ (q1 : _) _ : _) col =
-  case q1 of
-    ConsSkel _ cons ->
-      useful (specialize undefined cons matrix) (specializedCol cons col)
-    WildSkel {}
-      | isSignature headColConses (skelRange q1) ->
-          any (\cons -> useful (specialize undefined cons matrix)
-                               (specializedCol cons col)) headColConses
-      | otherwise ->
-          useful (defaultMatrix undefined matrix) (Col defCol)
-  where headColConses = columnConstructors (headColumn matrix)
-        defaultCol (Col col) =
-          where [Row _ defCol _] =
-                  defaultMatrix undefined [Row undefined col undefined]
-        specializeCol cons (Col col) = Col specCol
-          where [Row _ specCol _] =
-                  specialize undefined cons [Row undefined col undefined]
--- neededColumns :: ()
+-- useful :: Eq tag
+--        => Matrix ident tag pat expr out
+--        -> Col ident tag pat
+--        -> Bool
+-- useful (Row _ [] _ : _) _ = False
+-- useful [] _               = True
+-- useful matrix@(Row _ (q1 : _) _ : _) col =
+--   case q1 of
+--     ConsSkel _ cons ->
+--       useful (specialize undefined cons matrix) (specializedCol cons col)
+--     WildSkel {}
+--       | isSignature headColConses (skelRange q1) ->
+--           any (\cons -> useful (specialize undefined cons matrix)
+--                                (specializedCol cons col)) headColConses
+--       | otherwise ->
+--           useful (defaultMatrix undefined matrix) (Col defCol)
+--   where headColConses = columnConstructors (headColumn matrix)
+--         defaultCol (Col col) = undefined
+--           where [Row _ defCol _] =
+--                   defaultMatrix undefined [Row undefined col undefined]
+--         specializeCol cons (Col col) = Col specCol
+--           where [Row _ specCol _] =
+--                   specialize undefined cons [Row undefined col undefined]
+-- -- neededColumns :: ()
 -- neededColumns = ()
 
 -- neededPrefix :: ()

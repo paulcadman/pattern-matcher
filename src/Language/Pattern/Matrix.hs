@@ -70,14 +70,14 @@ headColumn :: Matrix ident tag pat expr out
            -> Col ident tag pat
 headColumn = head . matrixColumns . verticalView
 
-columnConstructors :: Ord tag
+columnConstructors :: IsTag tag
                    => Col ident tag pat
-                   -> Set (Cons ident tag pat)
+                   -> Map tag [Skel ident tag pat]
 columnConstructors =
   foldr (\skel sig ->
            case skel of
-             ConsSkel _ cons -> S.insert cons sig
-             WildSkel {}     -> sig) [] . colPatterns
+             ConsSkel (Cons tag payload) -> M.insert tag payload sig
+             WildSkel {}                 -> sig) [] . colPatterns
 
 isSignature :: Ord tag => Set (Cons ident tag pat) -> [tag] -> Bool
 isSignature cons range = null (filter (`S.member` S.map consTag cons) range)
@@ -94,7 +94,7 @@ swapFront n ps = p' : ps'
 
         (p', ps') = go n ps
 
-specialize :: Eq tag
+specialize :: IsTag tag
            => Select expr tag
            -> Cons ident tag pat
            -> Matrix ident tag pat expr out
@@ -103,7 +103,7 @@ specialize _ _ rs@(Row _ [] _ : _) = rs
 specialize expr (Cons tag consSubs) matrix = mapMaybe go matrix
   where go (Row bds (p : ps) out) =
           case p of
-            ConsSkel _ (Cons consTag subps)
+            ConsSkel (Cons consTag subps)
               | tag == consTag -> Just (Row bds (subps ++ ps) out)
               | otherwise -> Nothing
             WildSkel _ mid ->
@@ -125,38 +125,12 @@ defaultMatrix expr matrix = mapMaybe go matrix
               Nothing
         go (Row _ [] _) = error "Unexpected empty row in defaultMatrix"
 
-matchFirstColumn :: Ord tag
-                 => Select expr tag
-                 -> Matrix ident tag pat expr out
-                 -> ( Map tag ([Select expr tag], Matrix ident tag pat expr out)
-                    , Maybe (Matrix ident tag pat expr out)
-                    )
-matchFirstColumn expr matrix@(Row _ (skel : _) _ : _) =
-  ( specializedMatrices
-  , defaultMat
-  )
-  where specializedMatrices =
-          foldr (\(Row _ (skel : _) _) matrices ->
-                    case skel of
-                      ConsSkel _ cons@(Cons tag _) ->
-                        M.insert tag (soccs, smat) matrices
-                        where soccs = select cons expr
-                              smat = specialize expr cons matrix
-                      WildSkel {} -> matrices) [] matrix
-        range = skelRange skel
-        defaultMat
-          | any (`S.notMember` M.keysSet specializedMatrices) range =
-              Just (defaultMatrix expr matrix)
-          | otherwise =
-              Nothing
-matchFirstColumn _ _ = ([], Nothing)
-
-allSubMatrices :: Ord tag
-               => Select expr tag
-               -> Matrix ident tag pat expr out
-               -> [Matrix ident tag pat expr out]
-allSubMatrices expr matrix = foldr (:) (fmap snd (M.elems specMats)) defMat
-  where (specMats, defMat) = matchFirstColumn expr matrix
+-- allSubMatrices :: Ord tag
+--                => Select expr tag
+--                -> Matrix ident tag pat expr out
+--                -> [Matrix ident tag pat expr out]
+-- allSubMatrices expr matrix = foldr (:) (fmap snd (M.elems specMats)) defMat
+--   where (specMats, defMat) = matchFirstColumn expr matrix
 
 swapColumn :: Int
            -> Matrix ident tag pat expr out
