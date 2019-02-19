@@ -97,6 +97,9 @@ swapFront n ps = p' : ps'
 
 -- Puts the heads back at the given index. Opposite of swapFront
 swapBack :: Int -> [a] -> [a]
+swapBack _ [] =
+  error "swapBack cannot be applied to the empty list. \
+        \It is most likely a bug of the pattern-matcher library."
 swapBack n (p : ps) = (ys ++ p : zs)
   where (ys, zs) = splitAt (n - 1) ps
 

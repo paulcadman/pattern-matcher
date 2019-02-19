@@ -8,6 +8,7 @@ module Language.Pattern.Compiler (
   , Select(..)
   , DecTree(..)
   , Binding(..)
+  , Matcher(..)
   , match
   -- * Heuristics
   , module Language.Pattern.Heuristics

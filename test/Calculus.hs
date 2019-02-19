@@ -2,18 +2,17 @@
 
 module Calculus where
 
-import           Language.Pattern.Heuristics (noHeuristic)
-import           Language.Pattern.Matcher    (Skel (..))
-import qualified Language.Pattern.Matcher    as Matcher
+import           Language.Pattern.Compiler (Skel (..), noHeuristic)
+import qualified Language.Pattern.Compiler as Matcher
 
-import           Control.Applicative         hiding (Const)
-import           Control.Arrow               (second)
-import           Control.Monad.Identity
-import           Data.Map                    (Map)
-import qualified Data.Map                    as M
-import qualified Data.Set                    as S
+import           Control.Applicative       hiding (Const)
+import           Control.Arrow             (second)
+import           Control.Monad
+import           Data.Map                  (Map)
+import qualified Data.Map                  as M
+import qualified Data.Set                  as S
 import           Data.Text.Prettyprint.Doc
-import           Test.QuickCheck             hiding (Result)
+import           Test.QuickCheck           hiding (Result)
 
 newtype Var = MkVar String
             deriving(Eq, Ord, Show)
@@ -25,6 +24,9 @@ data Typ = TInt
 instance Pretty Typ where
   pretty TInt        = "Int"
   pretty (TList typ) = "[" <> pretty typ <> "]"
+
+listSubTyp :: Typ -> Typ
+listSubTyp (TList typ) = typ
 
 data ExprDesc = Const Int
               | Var Var
@@ -182,52 +184,81 @@ data ListTag = NilTag | ConsTag
              deriving(Eq, Ord, Show)
 
 data Tag = IntTag Int
-         | ListTag ListTag
-         deriving(Eq, Ord, Show)
+         | ListTag ListTag Typ
+
+instance Eq Tag where
+  IntTag i == IntTag j = i == j
+  ListTag lt _ == ListTag lt' _ = lt == lt'
+
+instance Ord Tag where
+  IntTag {} `compare` ListTag {} = LT
+  ListTag {} `compare` IntTag {} = GT
+  IntTag i `compare` IntTag j = compare i j
+  ListTag lt _ `compare` ListTag lt' _ = compare lt lt'
 
 instance Pretty Tag where
-  pretty (IntTag i)        = "Int#" <> pretty i
-  pretty (ListTag NilTag)  = "[]"
-  pretty (ListTag ConsTag) = "_::_"
+  pretty (IntTag i)            = "Int#" <> pretty i
+  pretty (ListTag NilTag typ)  = "[]" <> "@" <> pretty (TList typ)
+  pretty (ListTag ConsTag typ) = "_::_" <> "@" <> pretty (TList typ)
 
 rangeOf :: Typ -> [Tag]
-rangeOf TInt      = fmap IntTag [minBound..maxBound]
-rangeOf (TList _) = listRange
+rangeOf TInt        = fmap IntTag [minBound..maxBound]
+rangeOf (TList typ) = listRange typ
 
-listRange :: [Tag]
-listRange = [ListTag NilTag, ListTag ConsTag]
+intRange :: [Tag]
+intRange = fmap IntTag [minBound..maxBound]
 
-wildSkel :: Typ -> Maybe Var -> Skel Var Tag Pat
+listRange :: Typ -> [Tag]
+listRange typ = [ListTag NilTag typ, ListTag ConsTag typ]
+
+instance Matcher.IsTag Tag where
+  tagRange (IntTag _)      = intRange
+  tagRange (ListTag _ typ) = listRange typ
+
+  tagArity (IntTag _)          = 0
+  tagArity (ListTag NilTag _)  = 0
+  tagArity (ListTag ConsTag _) = 2
+
+  defaultCons tag@(IntTag _) = Matcher.cons tag []
+  defaultCons tag@(ListTag NilTag _) = Matcher.cons tag []
+  defaultCons tag@(ListTag ConsTag typ) =
+    Matcher.cons tag [ WildSkel (rangeOf typ) Nothing
+                     , WildSkel (rangeOf (TList typ)) Nothing
+                     ]
+
+wildSkel :: Typ -> Maybe Var -> Skel Var Tag
 wildSkel typ = WildSkel (rangeOf typ)
 
-intSkel :: Int -> Skel Var Tag Pat
-intSkel i = ConsSkel (rangeOf TInt) (Matcher.cons (IntTag i) [])
+intSkel :: Int -> Skel Var Tag
+intSkel i = ConsSkel (Matcher.cons (IntTag i) [])
 
-nilSkel :: Skel Var Tag Pat
-nilSkel = ConsSkel listRange (Matcher.cons (ListTag NilTag) [])
+nilSkel :: Typ -> Skel Var Tag
+nilSkel typ = ConsSkel (Matcher.cons (ListTag NilTag typ) [])
 
-consSkel :: Matcher.Skel Var Tag Pat
-         -> Matcher.Skel Var Tag Pat
-         -> Matcher.Skel Var Tag Pat
-consSkel p ps = ConsSkel listRange (Matcher.cons (ListTag ConsTag) [p, ps])
+consSkel :: Typ
+         -> Skel Var Tag
+         -> Skel Var Tag
+         -> Skel Var Tag
+consSkel typ p ps =
+  ConsSkel (Matcher.cons (ListTag ConsTag typ) [p, ps])
 
-deconstruct :: Pat -> [Matcher.Skel Var Tag Pat]
+deconstruct :: Pat -> [Matcher.Skel Var Tag]
 deconstruct pat =
   case patDesc pat of
     PWild      -> [wildSkel (patTyp pat) Nothing]
     PVar v     -> [wildSkel (patTyp pat) (Just v)]
     PConst i   -> [intSkel i]
-    PNil       -> [nilSkel]
+    PNil       -> [nilSkel (listSubTyp (patTyp pat))]
     PCons p ps -> do
       p <- deconstruct p
       ps <- deconstruct ps
-      pure (consSkel p ps)
+      pure (consSkel (listSubTyp (patTyp pat)) p ps)
     POr p p'   -> deconstruct p ++ deconstruct p'
 
-matcher :: Matcher.Matcher Identity Var Tag Pat SExpr
+matcher :: Matcher.Matcher Var Tag Pat SExpr SExpr
 matcher =
-  Matcher.Matcher { Matcher.deconstruct = pure . deconstruct
-                  , Matcher.heuristic = \idx skl -> pure (noHeuristic idx skl)
+  Matcher.Matcher { Matcher.matcherDecompose = deconstruct
+                  , Matcher.matcherHeuristic = noHeuristic
                   }
 
 data SExpr = SConst Int
@@ -247,12 +278,12 @@ instance Pretty SExpr where
   pretty (SMatch tree) =
     "match" <+> braces (pretty tree)
 
-data Tree = Fail
+data Tree = Fail [Pat]
           | Leaf [(Maybe Var, SExpr)] SExpr
           | Switch SExpr [(Tag, Tree)] (Maybe Tree)
 
 instance Pretty Tree where
-  pretty Fail = "Fail"
+  pretty (Fail pats) = "Fail" <+> hsep (fmap pretty (take 10 pats))
   pretty (Leaf bds out) =
     vsep (fmap (\(var, e) ->
                   "let" <+> pv var <+> "=" <+> pretty e <+> "in") bds ++
@@ -269,8 +300,20 @@ compileSel :: Matcher.Select SExpr Tag -> SExpr
 compileSel (Matcher.NoSel e)       = e
 compileSel (Matcher.Sel e tag idx) = SSel (compileSel e) tag idx
 
+patternOfSkel :: Skel Var Tag -> Pat
+patternOfSkel (ConsSkel (Matcher.Cons tag payload)) =
+  case (tag, payload) of
+    (IntTag i, []) ->
+      Pat (PConst i) TInt
+    (ListTag NilTag typ, []) ->
+      Pat PNil (TList typ)
+    (ListTag ConsTag typ, [p, ps]) ->
+      Pat (PCons (patternOfSkel p) (patternOfSkel ps)) (TList typ)
+    _ -> undefined
+
+
 compileTree :: Matcher.DecTree Var Tag Pat SExpr SExpr -> Tree
-compileTree Matcher.Fail = Fail
+compileTree (Matcher.Fail unmatched) = Fail (fmap patternOfSkel unmatched)
 compileTree (Matcher.Leaf bindings out _) =
   Leaf (fmap (\(v Matcher.:= e) -> (v, compileSel e)) bindings) out
 compileTree (Matcher.Switch expr branches def) =
@@ -286,7 +329,7 @@ compile expr =
     Nil -> SNil
     Cons e es -> SCons (compile e) (compile es)
     Match e brs -> SMatch (compileTree decTree)
-      where Identity decTree =
+      where decTree =
               Matcher.match matcher (compile e) (fmap (second compile) brs)
 
 evalSExpr :: Map Var Result -> SExpr -> Either EvalErr Result
@@ -300,11 +343,11 @@ evalSExpr env (SCons e es) = do
 evalSExpr env (SSel se tag idx) = do
   r <- evalSExpr env se
   case (r, tag) of
-    (ConsRes i is, ListTag ConsTag) | idx == 0 -> Right i
-                                    | idx == 1 -> Right is
+    (ConsRes i is, ListTag ConsTag _) | idx == 0 -> Right i
+                                      | idx == 1 -> Right is
     _ -> Left PatternFail
 evalSExpr env (SMatch tree) = evalTree env tree
-  where evalTree env Fail = Left PatternFail
+  where evalTree env (Fail unmatched) = Left PatternFail
         evalTree env (Leaf bindings sexpr) = do
           env' <-
             foldM (\env' (v, se) -> do
@@ -316,10 +359,10 @@ evalSExpr env (SMatch tree) = evalTree env tree
           evalSExpr env' sexpr
         evalTree env (Switch sexpr branches def) = do
           r <- evalSExpr env sexpr
-          let matches (IntTag i) (IntRes j)           = i == j
-              matches (ListTag NilTag) NilRes         = True
-              matches (ListTag ConsTag) (ConsRes _ _) = True
-              matches _ _                             = False
+          let matches (IntTag i) (IntRes j)             = i == j
+              matches (ListTag NilTag _) NilRes         = True
+              matches (ListTag ConsTag _) (ConsRes _ _) = True
+              matches _ _                               = False
           case foldr (\(tag, tree) sel ->
                          if tag `matches` r
                          then Just tree
