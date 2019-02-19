@@ -17,69 +17,70 @@ data Select expr tag = NoSel expr
 data Binding ident expr = Maybe ident := expr
                         deriving(Eq, Ord, Show)
 
-select :: Cons ident tag pat -> Select expr tag -> [Select expr tag]
+select :: Cons ident tag -> Select expr tag -> [Select expr tag]
 select (Cons tag subps) sel =
   fmap (Sel sel tag . fst) (zip [0..] subps)
 
 data Row ident tag pat expr out =
-  Row [Binding ident (Select expr tag)] [Skel ident tag pat] out
+  Row pat [Binding ident (Select expr tag)] [Skel ident tag] out
+
+rowOrigin :: Row ident tag pat expr out -> pat
+rowOrigin (Row pat _ _ _) = pat
 
 rowBindings :: Row ident tag pat expr out -> [Binding ident (Select expr tag)]
-rowBindings (Row bds _ _) = bds
+rowBindings (Row _ bds _ _) = bds
 
-rowPatterns :: Row ident tag pat expr out -> [Skel ident tag pat]
-rowPatterns (Row _ ps _) = ps
+rowPatterns :: Row ident tag pat expr out -> [Skel ident tag]
+rowPatterns (Row _ _ ps _) = ps
 
 rowOutput :: Row ident tag pat expr out -> out
-rowOutput (Row _ _ out) = out
+rowOutput (Row _ _ _ out) = out
 
 wildCardRow :: Row ident tag pat expr out -> Bool
 wildCardRow = all isWildSkel . rowPatterns
 
-newtype Col ident tag pat = Col [Skel ident tag pat]
+newtype Col ident tag = Col [Skel ident tag]
 
-colPatterns :: Col ident tag pat -> [Skel ident tag pat]
+colPatterns :: Col ident tag -> [Skel ident tag]
 colPatterns (Col ps) = ps
 
 type Matrix ident tag pat expr out = [Row ident tag pat expr out]
 
 data VMatrix ident tag pat expr out =
-  VMatrix { matrixColumns  :: [Col ident tag pat]
-          , matrixOut      :: [out]
-          , matrixBindings :: [[Binding ident (Select expr tag)]]
+  VMatrix { matrixColumns :: [Col ident tag]
+          , matrixRebuild :: [[Skel ident tag] -> Row ident tag pat expr out]
           }
 
 verticalView :: Matrix ident tag pat expr out
              -> VMatrix ident tag pat expr out
 verticalView matrix =
   VMatrix { matrixColumns = fmap Col (transpose (fmap rowPatterns matrix))
-          , matrixOut = fmap rowOutput matrix
-          , matrixBindings = fmap rowBindings matrix
+          , matrixRebuild =
+              fmap (\(Row pat bds _ out) ps -> Row pat bds ps out) matrix
           }
 
 horizontalView :: VMatrix ident tag pat expr out
                -> Matrix ident tag pat expr out
 horizontalView VMatrix { matrixColumns = cols
-                       , matrixOut = outputs
-                       , matrixBindings = bindings
+                       , matrixRebuild = rebuildRows
                        } =
-  zipWith3 Row bindings (transpose rows) outputs
+  zipWith ($) rebuildRows (transpose rows)
   where rows = fmap colPatterns cols
 
 headColumn :: Matrix ident tag pat expr out
-           -> Col ident tag pat
+           -> Col ident tag
 headColumn = head . matrixColumns . verticalView
 
 columnConstructors :: IsTag tag
-                   => Col ident tag pat
-                   -> Map tag [Skel ident tag pat]
+                   => Col ident tag
+                   -> Map tag [Skel ident tag]
 columnConstructors =
   foldr (\skel sig ->
            case skel of
              ConsSkel (Cons tag payload) -> M.insert tag payload sig
              WildSkel {}                 -> sig) [] . colPatterns
 
-isSignature :: Ord tag => Set (Cons ident tag pat) -> [tag] -> Bool
+isSignature :: Ord tag => Set (Cons ident tag) -> [tag] -> Bool
 isSignature cons range = null (filter (`S.member` S.map consTag cons) range)
 
 swapFront :: Int -> [a] -> [a]
@@ -94,43 +95,41 @@ swapFront n ps = p' : ps'
 
         (p', ps') = go n ps
 
+-- Puts the heads back at the given index. Opposite of swapFront
+swapBack :: Int -> [a] -> [a]
+swapBack n (p : ps) = (ys ++ p : zs)
+  where (ys, zs) = splitAt (n - 1) ps
+
 specialize :: IsTag tag
            => Select expr tag
-           -> Cons ident tag pat
+           -> Cons ident tag
            -> Matrix ident tag pat expr out
            -> Matrix ident tag pat expr out
-specialize _ _ rs@(Row _ [] _ : _) = rs
+specialize _ _ rs@(Row _ _ [] _ : _) = rs
 specialize expr (Cons tag consSubs) matrix = mapMaybe go matrix
-  where go (Row bds (p : ps) out) =
+  where go (Row pat bds (p : ps) out) =
           case p of
             ConsSkel (Cons consTag subps)
-              | tag == consTag -> Just (Row bds (subps ++ ps) out)
+              | tag == consTag -> Just (Row pat bds (subps ++ ps) out)
               | otherwise -> Nothing
             WildSkel _ mid ->
-              Just $ Row (mid := expr : bds)
-                         (fmap generalizeSkel consSubs ++ ps)
-                         out
-        go (Row _ [] _) = error "Unexpected empty row in specialize"
+              Just $ Row pat (mid := expr : bds)
+              (fmap generalizeSkel consSubs ++ ps)
+              out
+        go (Row _ _ [] _) = error "Unexpected empty row in specialize"
 
 defaultMatrix :: Select expr tag
               -> Matrix ident tag pat expr out
               -> Matrix ident tag pat expr out
-defaultMatrix _ rs@(Row _ [] _ : _) = rs
+defaultMatrix _ rs@(Row _ _ [] _ : _) = rs
 defaultMatrix expr matrix = mapMaybe go matrix
-  where go (Row bds (p : ps) out) =
+  where go (Row pat bds (p : ps) out) =
           case p of
             WildSkel _ mid ->
-              Just (Row (mid := expr : bds) ps out)
+              Just (Row pat (mid := expr : bds) ps out)
             ConsSkel {} ->
               Nothing
-        go (Row _ [] _) = error "Unexpected empty row in defaultMatrix"
-
--- allSubMatrices :: Ord tag
---                => Select expr tag
---                -> Matrix ident tag pat expr out
---                -> [Matrix ident tag pat expr out]
--- allSubMatrices expr matrix = foldr (:) (fmap snd (M.elems specMats)) defMat
---   where (specMats, defMat) = matchFirstColumn expr matrix
+        go (Row _ _ [] _) = error "Unexpected empty row in defaultMatrix"
 
 swapColumn :: Int
            -> Matrix ident tag pat expr out

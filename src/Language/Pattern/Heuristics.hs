@@ -91,26 +91,26 @@ type Index = Int
 type Score = Int
 
 -- | The definition of heuristics in our setting
-data Heuristic m ident tag pat expr out =
+data Heuristic ident tag expr out =
   -- | Computes the 'Score' for a given column. It may use the entire
   -- pattern matrix but it is also given the index of the column, the
   -- expression being matched and the column being matched.
-  Score (  Matrix ident tag pat expr out
+  Score (  [[Skel ident tag]]
         -> Index
         -> Select expr tag
-        -> [Skel ident tag pat]
-        -> m Score
+        -> [Skel ident tag]
+        -> Score
         )
   -- | Combine two heuristics: compute an initial score with the first
   -- heuristic and, if several columns have obtained the same score,
   -- use the second heuristic to choose among them.
-  | Combine (Heuristic m ident tag pat expr out)
-            (Heuristic m ident tag pat expr out)
+  | Combine (Heuristic ident tag expr out)
+            (Heuristic ident tag expr out)
 
 -- | A helper function to combine two heuristics.
-combine :: Heuristic m ident tag pat expr out
-        -> Heuristic m ident tag pat expr out
-        -> Heuristic m ident tag pat expr out
+combine :: Heuristic ident tag expr out
+        -> Heuristic ident tag expr out
+        -> Heuristic ident tag expr out
 combine = Combine
 
 -- $simple A set of simple and cheap to compute heuristics.
@@ -118,31 +118,31 @@ combine = Combine
 -- | This heuristic favours columns whose top pattern is a generalized
 -- constructor pattern. If the first pattern is a wildcard, the
 -- heuristic gives \(0\) and \(1\) otherwise.
-firstRow :: Monad m => Heuristic m ident tag pat expr out
+firstRow :: Heuristic ident tag expr out
 firstRow = Score score
-  where score _ _ _ (WildSkel {} : _) = pure 0
-        score _ _ _ _                 = pure 1
+  where score _ _ _ (WildSkel {} : _) = 0
+        score _ _ _ _                 = 1
 
 -- | This heuristic favours columns with the least number of wildcard
 -- patterns. If \(v(i)\) is the number of wildcards in column \(i\),
 -- then \(-v(i)\) is the score of column \(i\).
-smallDefault :: Monad m => Heuristic m ident tag pat expr out
+smallDefault :: Heuristic ident tag expr out
 smallDefault = Score score
   where score _ _ _ =
-          pure . foldr (\skel score ->
-                          case skel of
-                            WildSkel {} -> score - 1
-                            ConsSkel {} -> score) 0
+          foldr (\skel score ->
+                    case skel of
+                      WildSkel {} -> score - 1
+                      ConsSkel {} -> score) 0
 
 -- | Favours columns resulting in small switches. The score of a column is
 -- the number of branches of the switch resulting of the compilation
 -- (including an eventually default branch), negated.
-smallBranchingFactor :: (Monad m, IsTag tag) => Heuristic m ident tag pat expr out
+smallBranchingFactor :: IsTag tag => Heuristic ident tag expr out
 smallBranchingFactor = Score score
-  where score _ _ _ [] = pure (-1)
+  where score _ _ _ [] = -1
         score _ _ _ column@(skel : _)
-          | null (range \\ headConsSet) = pure (- length headConsSet)
-          | otherwise = pure (- length headConsSet - 1)
+          | null (range \\ headConsSet) = - length headConsSet
+          | otherwise = - length headConsSet - 1
           where range = skelRange skel
                 headConsSet =
                   foldr (\skel consSet ->
@@ -151,9 +151,9 @@ smallBranchingFactor = Score score
                              WildSkel {}           -> consSet) [] column
 
 -- | The sum of the arity of the constructors of this column, negated.
-arity :: Monad m => Heuristic m ident tag pat expr out
+arity :: Heuristic ident tag expr out
 arity = Score score
-  where score _ _ _ = pure . sum . fmap contrib
+  where score _ _ _ = sum . fmap contrib
         contrib (ConsSkel (Cons _ subSkels)) = length subSkels
         contrib WildSkel {}                  = 0
 
@@ -166,7 +166,7 @@ arity = Score score
 -- this column and count the number of specialized matrix whose first
 -- column is entirely made of wildcards.
 
--- leafEdge :: (Ord tag, Monad m) => Heuristic m ident tag pat expr out
+-- leafEdge :: (Ord tag, Monad m) => Heuristic m ident tag expr out
 -- leafEdge = Score score
 --   where score matrix idx expr _ = pure score
 --           where specializedMatrices =
@@ -178,7 +178,7 @@ arity = Score score
 -- \(i\) and then calculating the number of rows in the resulting
 -- matrices.
 
--- fewerChildRule :: (Ord tag, Monad m) => Heuristic m ident tag pat expr out
+-- fewerChildRule :: (Ord tag, Monad m) => Heuristic m ident tag expr out
 -- fewerChildRule = Score score
 --   where score matrix idx expr _ = pure score
 --           where specializedMatrices =
@@ -203,8 +203,8 @@ arity = Score score
 -- for pattern matching) ».
 
 -- useful :: Eq tag
---        => Matrix ident tag pat expr out
---        -> Col ident tag pat
+--        => Matrix ident tag expr out
+--        -> Col ident tag
 --        -> Bool
 -- useful (Row _ [] _ : _) _ = False
 -- useful [] _               = True
@@ -243,18 +243,18 @@ arity = Score score
 
 -- | Leaves the column in the same order by giving the score \(-i\) to
 -- column \(i\).
-noHeuristic :: Monad m => Heuristic m ident tag pat expr out
-noHeuristic = Score $ \_ idx _ _ -> pure (- idx)
+noHeuristic :: Heuristic ident tag expr out
+noHeuristic = Score $ \_ idx _ _ -> - idx
 
 -- | Reverse the order of the columns by giving the score \(i\) to column
 -- \(i\). It can be useful in combination with another heuristic to
 -- reverse the left-to-right bias of this implementation.
-reverseNoHeuristic :: Monad m => Heuristic m ident tag pat expr out
-reverseNoHeuristic = Score $ \_ idx _ _ -> pure idx
+reverseNoHeuristic :: Heuristic ident tag expr out
+reverseNoHeuristic = Score $ \_ idx _ _ -> idx
 
 -- | This heuristic is called a pseudo-heuristic as it doesn't operate
 -- on the patterns but on the expression. It is most useful as a last
 -- resort heuristic in combination with others.
-shorterOccurence :: (Select expr tag -> m Score)
-                 -> Heuristic m ident tag pat expr out
+shorterOccurence :: (Select expr tag -> Score)
+                 -> Heuristic ident tag expr out
 shorterOccurence occSize = Score (\_ _ expr _ -> occSize expr)

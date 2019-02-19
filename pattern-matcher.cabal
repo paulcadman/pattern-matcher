@@ -3,7 +3,7 @@
 
 name:                pattern-matcher
 version:             0.1.0.0
--- synopsis:
+synopsis:            A library for compiling linear pattern-matching.
 -- description:
 license:             BSD3
 license-file:        LICENSE
@@ -17,7 +17,7 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Language.Pattern.Compiler
-                     , Language.Pattern.Skel
+  other-modules:       Language.Pattern.Skel
                      , Language.Pattern.Heuristics
   other-modules:       Language.Pattern.Matrix
   -- other-extensions:
