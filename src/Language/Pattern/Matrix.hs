@@ -8,8 +8,6 @@ import           Data.List             (transpose)
 import           Data.Map              (Map)
 import qualified Data.Map              as M
 import           Data.Maybe
-import           Data.Set              (Set)
-import qualified Data.Set              as S
 
 data Select expr tag = NoSel expr
                      | Sel (Select expr tag) tag Int
@@ -80,8 +78,8 @@ columnConstructors =
              ConsSkel (Cons tag payload) -> M.insert tag payload sig
              WildSkel {}                 -> sig) [] . colPatterns
 
-isSignature :: Ord tag => Set (Cons ident tag) -> [tag] -> Bool
-isSignature cons range = null (filter (`S.member` S.map consTag cons) range)
+-- isSignature :: Ord tag => Set (Cons ident tag) -> [tag] -> Bool
+-- isSignature cons range = null (filter (`S.member` S.map consTag cons) range)
 
 swapFront :: Int -> [a] -> [a]
 swapFront n _ | n < 0 = error "The index selected \

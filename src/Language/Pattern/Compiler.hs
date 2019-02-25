@@ -10,11 +10,14 @@ module Language.Pattern.Compiler (
   , Binding(..)
   , Matcher(..)
   , match
+  , Anomalies(..)
+  , anomalies
   -- * Heuristics
   , module Language.Pattern.Heuristics
   ) where
 
 import           Control.Exception
+import           Data.Foldable               (toList)
 import           Data.List                   (groupBy, sortOn)
 import           Data.Map                    (Map)
 import qualified Data.Map                    as M
@@ -76,6 +79,14 @@ executeHeuristic (Combine h1 h2) occs matrix =
     _ -> indicesH1
   where indicesH1 = executeHeuristic h1 occs matrix
 
+type FailureCont ident tag =
+  [[Skel ident tag]] -> [[Skel ident tag]]
+
+data SubProblem ident tag pat expr out =
+  SubProblem { subMatrix   :: Matrix ident tag pat expr out
+             , failureCont :: FailureCont ident tag
+             }
+
 headConstructors :: Foldable f
                  => f (Skel ident tag)
                  -> [Cons ident tag]
@@ -84,14 +95,6 @@ headConstructors =
            case mc of
              WildSkel {}   -> cs
              ConsSkel cons -> cons : cs) []
-
-type FailureCont ident tag =
-  [[Skel ident tag]] -> [[Skel ident tag]]
-
-data SubProblem ident tag pat expr out =
-  SubProblem { subMatrix   :: Matrix ident tag pat expr out
-             , failureCont :: FailureCont ident tag
-             }
 
 consFailureCont :: IsTag tag
                 => tag
@@ -188,8 +191,7 @@ compileMatrix failureCont heuristic occs matrix@(Row _ bds ps out : ors) =
               matchFirstColumn (head shuffledOccs) shuffledMatrix
 
             -- Puts the patterns at maxScoreIndex back at there place
-            swapFailureCont =
-              fmap (swapBack maxScoreIndex)
+            swapFailureCont = fmap (swapBack maxScoreIndex)
 
             makeBranch (subOccs, SubProblem { subMatrix = matrix
                                             , failureCont = subFailureCont
@@ -219,3 +221,40 @@ match Matcher { matcherHeuristic = heuristic
                  | (pat, out) <- branches
                  , skel <- decompose pat
                  ]
+
+data Anomalies ident tag pat =
+  Anomalies { redundantPatterns :: Maybe [pat]
+            , unmatchedPatterns :: Maybe [Skel ident tag]
+            }
+
+anomalies :: IsTag tag
+          => (pat -> [Skel ident tag])
+          -> [pat]
+          -> Anomalies ident tag pat
+anomalies decompose column = treeAnomalies tree
+  where tree = match Matcher { matcherDecompose = decompose
+                             , matcherHeuristic = noHeuristic
+                             } () (zip column (repeat ()))
+
+        treeAnomalies (Fail unmatched) =
+          Anomalies { unmatchedPatterns = Just unmatched
+                    , redundantPatterns = Nothing
+                    }
+        treeAnomalies (Leaf _ _ redundant) =
+          Anomalies { unmatchedPatterns = Nothing
+                    , redundantPatterns = redundant
+                    }
+        treeAnomalies (Switch _ branches defBranch) =
+          foldr foldBranches (Anomalies Nothing Nothing)
+          (toList branches ++ toList defBranch)
+          where foldBranches tree Anomalies { redundantPatterns = redundant
+                                            , unmatchedPatterns = unmatched
+                                            } =
+                  Anomalies { unmatchedPatterns =
+                                newUnmatched <> unmatched
+                            , redundantPatterns =
+                                newRedundant <> redundant
+                            }
+                  where Anomalies { unmatchedPatterns = newUnmatched
+                                  , redundantPatterns = newRedundant
+                                  } = treeAnomalies tree
