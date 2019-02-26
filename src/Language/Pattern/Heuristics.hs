@@ -1,67 +1,12 @@
 {-# LANGUAGE OverloadedLists #-}
 
--- | This module defines the heuristics studied in section 8 of
--- [Luc Maranget's paper](http://moscova.inria.fr/~maranget/papers/ml05e-maranget.pdf).
--- During the construction of the decision tree,
--- there may come a point when we have a choice between which
--- expression we want to match against a given pattern
--- column. Heuristics allows us to choose between those different
--- choices.
---
--- In there simplest form, heuristics attribute a simple score to a
--- column, given it's position in the column matrix, the expression to
--- match and the column of patterns. Some more complicated heuristics
--- exist that require having access to the entire matrix.
---
--- == Combining heuristics
---
--- A single heuristic may give the same score to several columns,
--- leading to ambiguity on the one to choose. Combining heuristic
--- allows to use a second heuristic to break such a tie.
---
--- Note that if there is a tie after applying the heuristic supplied
--- by the user, the algorithm will choose the left-most pattern with
--- the highest score.
---
--- == Influence on the semantic
---
--- A word of warning, heuristics might have an influence on the
--- semantic of the language if the resulting decision tree is used to
--- guide evaluation, as it can be the case in a lazy language.
---
--- == “But how do I choose?”
---
--- Detailed benchmarks are given in section 9 of Maranget's paper,
--- in terms of code size and average path length in a prototype
--- compiler, both for single and combined heuristics (up to 3
--- combinations). A conclusion to his findings is given in section 9.2
--- and is reproduced here:
---
--- 1. Good primary heuristics are 'firstRow', 'neededPrefix' and
--- 'constructorPrefix'. This demonstrates the importance of
--- considering clause order in heuristics.
---
--- 2. If we limit choice to combinations of at most two heuristics,
--- 'fewerChildRule' is a good complement to all primary
--- heuristics. Heuristic 'smallBranchingFactor' looks sufficient to
--- break the ties left by 'neededPrefix' and 'constructorPrefix'.
---
--- 3. If we limit choice to heuristics that are simple to compute,
--- that is if we eliminate 'neededColumns', 'neededPrefix', 'fewerChildRule'
--- and 'leafEdge' , then good choices are 'firstRow' composed with
--- 'smallDefault' composed with 'smallBranchingFactor',
--- 'constructorPrefix' composed with 'smallBranchingFactor' and
--- 'constructorPrefix' composed with 'smallBranchingFactor' (and
--- eventually further composed with 'arity' or 'smallDefault'). In
--- particular, 'constructorPrefix' composed with
--- 'smallBranchingFactor' and 'arity' is the only one with size in the
--- best range.
 
-module Language.Pattern.Heuristics ( Heuristic(..)
+module Language.Pattern.Heuristics ( Index
+                                   , Score
+                                   , Heuristic(..)
                                    -- * Simple heuristics
                                    --
                                    -- $simple
-                                   , combine
                                    , firstRow
                                    , smallDefault
                                    , smallBranchingFactor
@@ -94,7 +39,6 @@ import qualified Data.Map                as M
 type Index = Int
 type Score = Int
 
--- | The definition of heuristics in our setting
 data Heuristic ident tag expr out =
   -- | Computes the 'Score' for a given column. It may use the entire
   -- pattern matrix but it is also given the index of the column, the
@@ -110,12 +54,6 @@ data Heuristic ident tag expr out =
   -- use the second heuristic to choose among them.
   | Combine (Heuristic ident tag expr out)
             (Heuristic ident tag expr out)
-
--- | A helper function to combine two heuristics.
-combine :: Heuristic ident tag expr out
-        -> Heuristic ident tag expr out
-        -> Heuristic ident tag expr out
-combine = Combine
 
 -- $simple A set of simple and cheap to compute heuristics.
 
@@ -164,12 +102,6 @@ arity = Score score
 -- $expensive The following heuristics are deemed expensive as they
 -- require manipulation on the matrix of patterns to compute a score.
 
--- | The score is the number of children of the emitted switch node
--- that are leaves. To compute it, we swap column \(i\) to the front,
--- calculate the specialized matrix for all possible constructors on
--- this column and count the number of specialized matrix whose first
--- column is entirely made of wildcards.
-
 computeSubMatrices :: IsTag tag
                    => [[Skel ident tag]]
                    -> [[[Skel ident tag]]]
@@ -186,6 +118,11 @@ computeSubMatrices rawMatrix = subSkels
           defaultSubMat conses
         subSkels = fmap (fmap rowPatterns) subMatrices
 
+-- | The score is the number of children of the emitted switch node
+-- that are leaves. To compute it, we swap column \(i\) to the front,
+-- calculate the specialized matrix for all possible constructors on
+-- this column and count the number of specialized matrix whose first
+-- column is entirely made of wildcards.
 leafEdge :: IsTag tag
          => Heuristic ident tag expr out
 leafEdge = Score score
@@ -258,7 +195,7 @@ rowsInNeed :: IsTag tag
 rowsInNeed matrix colIdx =
   filter (useful matrix colIdx) [0..length matrix - 1]
 
--- The score \(n(i)\) is the number of rows \(j\) such that \(i\) is
+-- | The score \(n(i)\) is the number of rows \(j\) such that \(i\) is
 -- needed for row \(j\).
 neededColumns :: IsTag tag
               => Heuristic ident tag expr out
@@ -272,12 +209,17 @@ longestPrefix st (p1 : ps)
   | st == p1 = p1 : longestPrefix (succ p1) ps
 longestPrefix _ _ = []
 
+-- | The score \(p(i)\) is the index \(j\) of the row such that
+-- \(\forall k, 1 ≤ k ≤ j\), column \(i\) is needed for row \(k\).
 neededPrefix :: IsTag tag
              => Heuristic ident tag expr out
 neededPrefix = Score score
   where score matrix colIdx _ _ =
           length (longestPrefix 0 (rowsInNeed matrix colIdx))
 
+-- | 'constructorPrefix' is a cheaper version of 'neededPrefix', by
+-- computing the longest prefix in column \(i\) such that all the
+-- patterns are constructor patterns.
 constructorPrefix :: IsTag tag
                   => Heuristic ident tag expr out
 constructorPrefix = Score score

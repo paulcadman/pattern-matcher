@@ -9,11 +9,19 @@ import           Data.Map              (Map)
 import qualified Data.Map              as M
 import           Data.Maybe
 
+-- | Encodes the selection of a subexpression given a @tag@.
 data Select expr tag = NoSel expr
                      | Sel (Select expr tag) tag Int
+                     -- ^ @'Sel' e t n@ selects the @n+1@-th
+                     -- subexpression in @e@ assuming @e@ is
+                     -- caracterized by tag @t@.
+                     --
+                     -- For example, @Sel (e :: e') _::_ 1@, would
+                     -- select the second field @e :: e'@,
+                     -- in this case @e'@.
 
 data Binding ident expr = Maybe ident := expr
-                        deriving(Eq, Ord, Show)
+                        deriving(Show)
 
 select :: Cons ident tag -> Select expr tag -> [Select expr tag]
 select (Cons tag subps) sel =
