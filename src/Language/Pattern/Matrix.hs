@@ -10,11 +10,13 @@ import qualified Data.Map              as M
 import           Data.Maybe
 
 -- | Encodes the selection of a subexpression given a @tag@.
-data Select expr tag = NoSel expr
+data Select expr tag = NoSel expr -- ^ An untouched expression
                      | Sel (Select expr tag) tag Int
                      -- ^ @'Sel' e t n@ selects the @n+1@-th
                      -- subexpression in @e@ assuming @e@ is
-                     -- caracterized by tag @t@.
+                     -- caracterized by tag @t@. Such an expression
+                     -- will only be generated after it has been
+                     -- checked that @e@ has indeed tag @t@.
                      --
                      -- For example, @Sel (e :: e') _::_ 1@, would
                      -- select the second field @e :: e'@,

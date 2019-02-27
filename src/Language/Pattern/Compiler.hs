@@ -1,6 +1,6 @@
 {-# LANGUAGE MultiParamTypeClasses, OverloadedLists, TupleSections #-}
 
--- | A compiler for linear pattern-matching to decision trees. Based on
+-- | A compiler for pattern-matching to decision trees. Based on
 -- [Compiling pattern-matching to good decision
 -- trees](http://moscova.inria.fr/~maranget/papers/ml05e-maranget.pdf)
 -- and [Warnings for pattern
@@ -8,36 +8,26 @@
 -- by Luc Maranget.
 
 module Language.Pattern.Compiler (
+  -- | This library is centered around the 'match' and 'anomalies'
+  -- functions. 'match' compiles a match to a decision tree
+  -- ('DecTree'), while 'anomalies' returns any anomaly with a list of
+  -- patterns, such as unmatched patterns or redundant clauses.
   match
+  , Anomalies(..)
+  , anomalies
   -- * Generic pattern representation
-
+  --
   -- | Patterns are simplified into pattern 'Skel'etons to either
-  -- catch-all patterns (also known as wildcard patterns) or
-  -- constructor patterns. Constructor patterns are identified with a
-  -- @tag@ and filter values sharing this same @tag@. It is assumed
-  -- that all values and all patterns in the language can be
-  -- represented as a constructor.
+  -- wildcard patterns (catch-all patterns) or constructor patterns
+  -- made of a @tag@ and subpatterns. Or-patterns should be split into
+  -- distinct patterns before being passed to 'match'.
   --
-  -- === Example
-  --
-  -- Let's take the example of a language with variables, integers and lists:
-  --
-  -- > data Pattern = NilPat   | ConsPat   Pattern Pattern | IntPat Int
-  -- > data Value   = NilValue | ConsValue Value Value     | IntValue Int
-  --
-  -- The associated @tag@ can simply be:
-  --
-  -- > data Tag = NilTag | ConsTag | IntTag Int
-  --
-  -- and the translation to the 'Cons' based representation is:
-  --
-  -- > toCons NilPat         = ConsSkel (cons NilTag [])
-  -- > toCons (ConsPat p ps) = ConsSkel (cons ConsTag [toCons p, toCons ps])
-  -- > toCons (IntPat i)     = ConsSkel (cons (IntTag i) [])
-  --
-  -- @tag@s should be members of the 'IsTag' class. This class ensures
-  -- that the compiler has access to some informations about the pattern.
-
+  -- The range (or /signature/) of a @tag@ is the complete set of
+  -- @tag@s for a given datatype (e.g., @[]@ and @_:_@ for Haskell
+  -- lists). It is assumed that the range a @tag@ belongs to is known,
+  -- as well as the range of all the subfields of a constructor with a
+  -- given @tag@. These requirements are enforced through the 'IsTag'
+  -- typeclass.
   , Cons(Cons, consTag, consPayload)
   , cons
   , Skel(..)
@@ -47,10 +37,6 @@ module Language.Pattern.Compiler (
   -- * Decision trees
   , DecTree(..)
   , Binding(..)
-  -- , Matcher(..)
-  -- ** Anomaly detection
-  , Anomalies(..)
-  , anomalies
   -- * Heuristics
   -- $heuristics
   , module Language.Pattern.Heuristics
@@ -85,14 +71,20 @@ data DecTree ident tag pat expr out =
          -- bindings is in the order of matching, as given by the
          -- heuristics.
          , leafOut       :: out
+         -- ^ The result obtained when arriving at this leaf
          , leafRedundant :: Maybe [pat]
          }
-  -- | Branching on the 'tag' of an expression
+  -- | Branching on an 'tag' expression
   | Switch { switchOn       :: Select expr tag
-           -- ^ The expression to branch on
+           -- ^ The expression whose @tag@ is being scrutanized
            , switchBranches :: Map tag (DecTree ident tag pat expr out)
-           -- ^ Branches to follow based on specific tags. If the tag is not present, then
+           -- ^ Branches to follow based on specific tags. Any
+           -- expression not caracterized by any @tag@ will fall back
+           -- to the default branch.
            , switchCatchAll :: Maybe (DecTree ident tag pat expr out)
+           -- ^ Branch to follow if the expression's @tag@ is not
+           -- present in the set of branches above. This branch may be
+           -- absent if all @tag@s are present in the 'switchBranches'
            }
 
 executeHeuristic :: Heuristic ident tag expr out
@@ -246,15 +238,19 @@ compileMatrix failureCont heuristic occs matrix@(Row _ bds ps out : ors) =
             branches = fmap makeBranch specializedMatrices
             defaultBranch = fmap (makeBranch . ([],)) defaultMatrix
 
--- | Generates the decision tree resulting from matching the expression
--- against the list of patterns, using the given heuristic.
+-- | Compiles a matching to a decision tree, using the given heuristic.
 match :: IsTag tag
-      => Heuristic ident tag expr out -- ^ The heuristic to use to
-                                      -- resolve ambiguous choice
-      -> (pat -> [Skel ident tag])    -- ^ How to decompose the language's
-                                      -- pattern into skeletons
+      => Heuristic ident tag expr out
+      -- ^ The heuristic to use to resolve ambiguous choices
+      -> (pat -> [Skel ident tag])
+      -- ^ A way to decompose the language's patterns into
+      -- 'Skel'etons. Producing a list allows to account for
+      -- or-patterns. They are tested from left to right.
       -> expr
+      -- ^ The expression being scrutanized
       -> [(pat, out)]
+      -- ^ The list of patterns to match on with the output
+      -- associated. Patterns are tried from left to right.
       -> DecTree ident tag pat expr out
 match heuristic decompose expr branches =
   compileMatrix id heuristic [NoSel expr] matrix
@@ -263,7 +259,8 @@ match heuristic decompose expr branches =
                  , skel <- decompose pat
                  ]
 
--- | Gathers all the anomalies present in a pattern-match
+-- | Gathers all the anomalies present in a matching. 'Nothing'
+-- indicating the absence of an anomaly.
 data Anomalies ident tag pat =
   Anomalies { redundantPatterns :: Maybe [pat]
             , unmatchedPatterns :: Maybe [Skel ident tag]

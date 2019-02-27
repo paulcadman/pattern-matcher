@@ -6,6 +6,8 @@ module Language.Pattern.Skel (
   , IsTag(..)
   , Skel(..)
   , skelRange
+  , tagArity
+  , defaultCons
   , isWildSkel
   , isConsSkel
   , generalizeSkel
@@ -13,54 +15,31 @@ module Language.Pattern.Skel (
 
 import Control.Exception
 
--- |
-class Ord tag => IsTag tag where
-  -- | Returns the arity of a constructor that uses the given tag.
-  --
-  -- In the example above:
-  --
-  -- > tagArity NilTag     = 0
-  -- > tagArity ConsTag    = 2
-  -- > tagArity (IntTag _) = 0
-  tagArity :: tag -> Int
 
+class Ord tag => IsTag tag where
   -- | The range of tags a given tag could have had. @t@ should always
   -- be an element of @tagRange t@. In other words:
   --
   -- > elem t (tagRange t) == True
   --
-  -- In the example above:
-  --
-  -- > tagRange NilTag     = [NilTag, ConsTag]
-  -- > tagRange ConsTag    = [NilTag, ConsTag]
-  -- > tagRange (IntTag j) = fmap IntTag [minBound..maxBound]
+  -- The range of a @tag@ is used to generate missing patterns in
+  -- non-exhaustive matches. It might be interesting to consider the
+  -- order the range is given in, to improve the quality of error
+  -- messages. For instance, if one allows pattern-matching on
+  -- integers, instead of simply giving the range
+  -- [minBound..maxBound], it could be better to give the range
+  -- @[0..maxBound] ++ [-1,-2..minBound]@ (or a range alternating
+  -- positive and negative integers, starting at @0@) could help
+  -- generate simpler messages.
 
   tagRange :: tag -> [tag]
-  -- | The simplest constructor for a given @tag@, where all subpatterns
-  -- are wildcards.
-  --
-  -- In the example above:
-  --
-  -- > defaultCons NilTag = cons NilTag []
-  -- > defaultCons ConsTag = cons ConsTag [WildSkel ? Nothing, WildSkel ? Nothing]
-  -- > defaultCons (IntTag j) = cons (IntTag j) []
-  --
-  -- Note that, here, the @Tag@ type doesn't contain enough
-  -- information what is the range of @Tag@s tolerated in the
-  -- subpatterns of @ConsTag@. By modifying @ConsTag@ so that it
-  -- carries the type of the elements of the list, it is now possible
-  -- to give an implementation of 'defaultCons':
-  --
-  -- > data Typ = TInt | TList Typ
-  -- >
-  -- > typRange TInt = fmap IntTag [minBound..maxBound]
-  -- > typRange (TList typ) = [NilTag, ConsTag typ]
-  -- >
-  -- > defaultCons (ConsTag typ) =
-  -- >    cons ConsTag [WildSkel (typRange typ) Nothing, WildSkel (typRange (TList typ) Nothing)]
-  defaultCons :: tag -> Cons ident tag
 
--- | A generic constructor descriptor, made of a @tag@ and subpatterns.
+  -- | Returns the range of the @tag@s that can appear in all the
+  -- subfields of a constructor with the given @tag@.
+  subTags :: tag -> [[tag]]
+
+-- | A generic description of a constructor pattern, made of a @tag@ and
+-- subpatterns.
 data Cons ident tag = MkCons { consTag     :: tag
                              , consPayload :: [Skel ident tag]
                              }
@@ -90,6 +69,16 @@ data Skel ident tag = WildSkel [tag] (Maybe ident)
 skelRange :: IsTag tag => Skel ident tag -> [tag]
 skelRange (ConsSkel (Cons tag _)) = tagRange tag
 skelRange (WildSkel range _)      = range
+
+-- | The arity of a constructor associated with a @tag@.
+-- Computed as the length of the list returned by 'subTags'
+tagArity :: IsTag tag => tag -> Int
+tagArity = length . subTags
+
+-- | The simplest constructor for a given @tag@, where all subpatterns
+-- are wildcards.
+defaultCons :: IsTag tag => tag -> Cons ident tag
+defaultCons tag = cons tag (fmap (\rng -> WildSkel rng Nothing) (subTags tag))
 
 isWildSkel :: Skel ident tag -> Bool
 isWildSkel WildSkel {} = True
