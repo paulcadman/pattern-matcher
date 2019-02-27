@@ -24,12 +24,12 @@ case e of
 A simple compilation to a decision tree will give something like the following:
 ```
 e +--- (,) ---> e.0 +---  [] ----> e.1 +---- 0 ----> 0
-	                |                  |
-					|				   \---- _ ----> FAIL
-					|
-					\--- _:_ ----> e.1 +---- 1 ----> 1
-					                   |
-									   \---- _ ----> FAIL
+                    |                  |
+                    |                  \---- _ ----> FAIL
+                    |
+                    \--- _:_ ----> e.1 +---- 1 ----> 1
+                                       |
+                                       \---- _ ----> FAIL
 ```
 
 We can see that pattern matching is non-exhaustive (here the pattern
