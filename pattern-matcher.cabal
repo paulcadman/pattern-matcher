@@ -17,9 +17,7 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Language.Pattern.Compiler
-  other-modules:       Language.Pattern.Skel
-                     , Language.Pattern.Heuristics
-  other-modules:       Language.Pattern.Matrix
+  -- other-modules:
   -- other-extensions:
   build-depends:       base >=4.12 && <4.13
                      , containers
