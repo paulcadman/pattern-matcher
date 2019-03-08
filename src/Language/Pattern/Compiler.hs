@@ -108,11 +108,11 @@
 -- internal representation of most languages. The convention for the
 -- names of the parameters is:
 --
--- * 'ident' is the type of identifiers bound in patterns,
--- * 'tag' is the type of tags of constructors,
--- * 'pat' is the type of patterns in the user's language,
--- * 'expr' is the type of expressions in the user's language,
--- * 'out' is the type of the outputs of a matching.
+-- * @ident@ is the type of identifiers bound in patterns,
+-- * @tag@ is the type of tags of constructors,
+-- * @pat@ is the type of patterns in the user's language,
+-- * @expr@ is the type of expressions in the user's language,
+-- * @out@ is the type of the outputs of a matching.
 --
 -- To work, these functions need three things from the user (apart
 -- from the actual matching):
@@ -431,10 +431,7 @@ addBinding binding row = row { rowBindings = binding : rowBindings row }
 wildCardRow :: Row ident tag pat expr out -> Bool
 wildCardRow = all isWildSkel . rowPatterns
 
-newtype Col ident tag = Col [Skel ident tag]
-
-colPatterns :: Col ident tag -> [Skel ident tag]
-colPatterns (Col ps) = ps
+newtype Col ident tag = Col { colPatterns :: [Skel ident tag] }
 
 type Matrix ident tag pat expr out = [Row ident tag pat expr out]
 
