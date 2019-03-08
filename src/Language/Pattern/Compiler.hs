@@ -53,16 +53,19 @@
 -- >                                                                   |
 -- >                                                                   \---- _ ----> Fail [(_:_, 0), (_:_, 2), (_:_, 3), ...]
 --
--- First, the expression @e@ is checked for the tag @(,)@.  Since there is
--- no other constructor for @(,)@, this always succeeds. Matching on a
--- tuple yields to subexpression that we name @e(,).0@ and @e(,).1@
--- (the 'Select' type handles subexpression selection). We then check
--- @e(,).0@ against @[]@ and @_:_@. Since this is the set of all
--- possible constructors for lists, there is no possibility for the
--- match to fail here. We are then left with @e(,).1@ to match against
--- @0@,in the branch where @e(,).0@ is @[]@ and @1@ when @e(,).0@ is
--- @_:_@. In either case, the matching can fail since @0@ and @1@ are
--- not the only integers in existence.
+-- First, the expression @e@ is checked for the tag @(,)@.  Since
+-- there is no other constructor for @(,)@, this always
+-- succeeds. Matching on a tuple yields to subexpression that we name
+-- @e(,).0@ and @e(,).1@ (the 'Select' type handles subexpression
+-- selection), that must be matched to two “columns” of patterns:
+-- @e(,).0@ against @[]@ or @_:_@ and @e(,).1@ against @0@ or
+-- @1@. Note that we have a choice which test to perform first. Here
+-- we decide to check @e(,).0@ against @[]@ and @_:_@. Since this is
+-- the set of all possible constructors for lists, there is no
+-- possibility for the match to fail here. We are then left with
+-- @e(,).1@ to match against @0@,in the branch where @e(,).0@ is @[]@
+-- and @1@ when @e(,).0@ is @_:_@. In either case, the matching can
+-- fail since @0@ and @1@ are not the only integers in existence.
 --
 -- == Caracteristics of decision trees
 --
@@ -78,20 +81,20 @@
 --
 -- = Heuristics
 --
--- In the example above, in the @_:_@ branch we have decided to test
--- @e(,).0@. However, formally, if we were testing all patterns from
--- left to right, we should have tested the subexpressions
--- @e(,).0(_:_).0@, @e(,).0(_:_).1@ (i.e. the head and the tail of the
--- list contained in the first element of the tuple @e@) against the
--- two wildcards in @_:_@. This would of course have been useless,
--- since matching against a wildcard always succeeds. The algorithm
--- can make similar choices as the one we did through the use of
--- 'Heuristic's. The role of 'Heuristic's is to attribute a score to a
--- given list of patterns, so that the algorithm will first match
--- against the list of patterns with the best score. In this case, we
--- attributed a bigger score to the pattern @1@ than to the two
--- wildcards. A detailed list of how heuristics work, as well as all
--- the heuristics studied by Maranget are presented later.
+-- In the example above, we choose to test @e(,).0@ before @e(,).1@,
+-- but we could have made the opposite choice. Also, in the @_:_@
+-- branch we entirely ommited to test @e(,).0(_:_).0@, @e(,).0(_:_).1@
+-- (i.e. the head and the tail of the list introducing by matching on
+-- @_:_@) against the two wildcards of @_:_@. This would of course
+-- have been useless, since matching against a wildcard always
+-- succeeds. The algorithm can make similar choices as the one we did
+-- through the use of 'Heuristic's. The role of 'Heuristic's is to
+-- attribute a score to a given list of patterns, so that the
+-- algorithm will first match against the list of patterns with the
+-- best score. In this case, we attributed a bigger score to the
+-- pattern @1@ than to the two wildcards. A detailed list of how
+-- heuristics work, as well as all the heuristics studied by Maranget
+-- are presented later.
 --
 -- = How to use?
 --
@@ -206,7 +209,7 @@ module Language.Pattern.Compiler (
   , Binding(..)
   -- * Heuristics
   --
-  -- Most of the time, there are multiple ways to construct a decision
+  -- | Most of the time, there are multiple ways to construct a decision
   -- tree, since we are often faced with a choice as to which column
   -- of pattern to match first. Doing the wrong choice can lead to
   -- larger decision trees or to more tests on average. 'Heuristic's
@@ -230,9 +233,9 @@ module Language.Pattern.Compiler (
   --
   -- == Influence on the semantic
   --
-  -- A word of warning, heuristics might have an influence on the
-  -- semantic of the language if the resulting decision tree is used to
-  -- guide evaluation, as it can be the case in a lazy language.
+  -- Heuristics might have an influence on the semantic of the
+  -- language if the resulting decision tree is used to guide
+  -- evaluation, as it can be the case in a lazy language.
   --
   -- == “But how do I choose?”
   --
@@ -754,6 +757,7 @@ anomalies decompose column = treeAnomalies tree
 -- Heuristics
 ---------------------------------------------------------------------------
 
+-- | The index of the column of patterns
 type Index = Int
 type Score = Int
 
@@ -823,7 +827,7 @@ smallDefault = Score (\_ _ _ col -> getSum (foldMap score col))
         score ConsSkel {}     = Sum 0
         score (AsSkel skel _) = score skel
 
--- | Favours columns resulting in small switches. The score of a column is
+-- | Favours columns resulting in smaller switches. The score of a column is
 -- the number of branches of the switch resulting of the compilation
 -- (including an eventually default branch), negated.
 smallBranchingFactor :: IsTag tag => Heuristic ident tag expr out
@@ -864,10 +868,7 @@ computeSubMatrices rawMatrix = subSkels
         subSkels = fmap (fmap rowPatterns) subMatrices
 
 -- | The score is the number of children of the emitted switch node
--- that are leaves. To compute it, we swap column \(i\) to the front,
--- calculate the specialized matrix for all possible constructors on
--- this column and count the number of specialized matrix whose first
--- column is entirely made of wildcards.
+-- that are leaves.
 leafEdge :: IsTag tag
          => Heuristic ident tag expr out
 leafEdge = Score score
@@ -875,11 +876,19 @@ leafEdge = Score score
           where subMatrices = computeSubMatrices (swapFront idx matrix)
                 score = length (fmap (filter (isWildSkel . head)) subMatrices)
 
--- | The score is the negation of the total number of rows in decomposed
--- matrices. This is computed by decomposing the matrix by the column
--- \(i\) and then calculating the number of rows in the resulting
--- matrices.
+-- | This heuristic favours columns that lead to fewer rows to test.
 
+-- = Example
+--
+-- Consider, the following @case@ expression:
+--
+-- > case e of
+-- >   ((), 1) -> o1
+-- >   ((), 2) -> o2
+--
+-- Choosing to match @e(,).0@ against @()@ would result in two rows to
+-- check @e(,).1@ against, whereas choosing @e(,).1@ would yield a
+-- single row
 fewerChildRule :: IsTag tag
                => Heuristic ident tag expr out
 fewerChildRule = Score score
