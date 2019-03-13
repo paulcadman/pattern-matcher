@@ -83,7 +83,6 @@
 -- more than once the same expression, which decision trees are
 -- guaranteed never to do.
 --
---
 -- = Heuristics
 --
 -- In the example above, we choose to test @e(,).0@ before @e(,).1@,
@@ -197,6 +196,31 @@
 --
 -- and this all one needs to do (apart from choosing a 'Heuristic') to
 -- use the compiler.
+--
+-- == Preserving sharing
+--
+-- The presence of or-patterns, like in this example, can cause
+-- duplication of outputs in leaves of the decision tree. Consider
+-- this example in OCaml syntax:
+--
+-- > match e with
+-- > | 0 | 1 -> e1
+-- > | _ -> e2
+--
+-- The resulting decision tree, would be:
+--
+-- > Switch e +--- 0 ---> e1
+-- >          |
+-- >          \--- 1 ---> e1
+-- >          |
+-- >          \--- _ ---> e2
+--
+-- with e1 being duplicated, which is undesirable when compiling
+-- this decision tree further to machine code as it would lead to
+-- increased code size. As a result, it might be worth to consider
+-- using labels for outputs and a table linking these
+-- labels to expressions. This would make the decision tree suitable
+-- for compilation using jumps, avoiding duplication.
 module Language.Pattern.Compiler (
 
   match
@@ -413,6 +437,8 @@ data Select expr tag = NoSel expr -- ^ An untouched expression
                      -- select the second field @e :: e'@,
                      -- in this case @e'@.
 
+-- | Binding of an identifier to an expression.
+-- Bindings of wildcards are conserved.
 data Binding ident expr = Maybe ident := expr
                         deriving(Show)
 
