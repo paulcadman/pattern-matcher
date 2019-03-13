@@ -32,10 +32,15 @@
 -- there own 'Skel'eton, or-patterns must first be
 -- decomposed into distinct lists of patterns.
 --
+-- In this documentation, a “row” is a list of patterns associated
+-- with an output, that will be selected if an expression matches all
+-- those patterns, while a “column” is a list of patterns that are
+-- tested against an expression from top to bottom.
+--
 -- == Decision trees
 --
 -- Decision trees can be thought of as cascading switches. Each
--- 'Switch' checking the constructor of an expression to decide what
+-- 'Switch' checks the constructor of an expression to decide what
 -- path to take, until it reaches a 'Leaf' (success) or encounters a
 -- dead-end 'Fail. Consider this Haskell example:
 --
@@ -65,9 +70,9 @@
 -- possibility for the match to fail here. We are then left with
 -- @e(,).1@ to match against @0@,in the branch where @e(,).0@ is @[]@
 -- and @1@ when @e(,).0@ is @_:_@. In either case, the matching can
--- fail since @0@ and @1@ are not the only integers in existence.
+-- fail since @0@ and @1@ do not cover the full range of integers.
 --
--- == Caracteristics of decision trees
+-- == Characteristics of decision trees
 --
 -- A decision tree is only one possible target to compile
 -- pattern-matching. An alternative is to compile to backtracking
@@ -251,22 +256,21 @@ module Language.Pattern.Compiler (
   --
   -- 2. If we limit choice to combinations of at most two heuristics,
   -- 'fewerChildRule' is a good complement to all primary
-  -- heuristics. Heuristic 'smallBranchingFactor' looks sufficient to
+  -- heuristics. 'smallBranchingFactor' looks sufficient to
   -- break the ties left by 'neededPrefix' and 'constructorPrefix'.
   --
   -- 3. If we limit choice to heuristics that are simple to compute,
   -- that is if we eliminate 'neededColumns', 'neededPrefix', 'fewerChildRule'
-  -- and 'leafEdge' , then good choices are 'firstRow' composed with
-  -- 'smallDefault' composed with 'smallBranchingFactor',
-  -- 'constructorPrefix' composed with 'smallBranchingFactor' and
-  -- 'constructorPrefix' composed with 'smallBranchingFactor' (and
-  -- eventually further composed with 'arity' or 'smallDefault'). In
-  -- particular, 'constructorPrefix' composed with
-  -- 'smallBranchingFactor' and 'arity' is the only one with size in the
-  -- best range.
+  -- and 'leafEdge' , then good choices are:
+  --
+  -- * @'seqHeuristics' ['firstRow', 'smallDefault' 'smallBranchingFactor']@,
+  -- * @'seqHeuristics' ['constructorPrefix', 'smallBranchingFactor']@,
+  -- * @'seqHeuristics' ['constructorPrefix', 'smallBranchingFactor']@
+  -- (eventually further composed with 'arity' or 'smallDefault').
   , Index
   , Score
   , Heuristic(..)
+  , seqHeuristics
     -- ** Simple heuristics
     --
     -- $simple
@@ -420,7 +424,7 @@ data Row ident tag pat expr out =
   Row { rowOrigin   :: pat
       , rowBindings :: [Binding ident (Select expr tag)]
       , rowPatterns :: [Skel ident tag]
-      , rowOutput   :: out
+      , _rowOutput  :: out
       }
 
 addBinding :: Binding ident (Select expr tag)
@@ -553,7 +557,7 @@ data DecTree ident tag pat expr out =
          }
   -- | Branching on an 'tag' expression
   | Switch { switchOn       :: Select expr tag
-           -- ^ The expression whose @tag@ is being scrutanized
+           -- ^ The expression whose @tag@ is being scrutinised
            , switchBranches :: Map tag (DecTree ident tag pat expr out)
            -- ^ Branches to follow based on specific tags. Any
            -- expression not caracterized by any @tag@ will fall back
@@ -774,6 +778,11 @@ data Heuristic ident tag expr out =
   | Combine (Heuristic ident tag expr out)
             (Heuristic ident tag expr out)
 
+-- | Combine a list of heuristics from left-to-right, defaulting to
+-- using no heuristic. Defined as @foldr Combine noHeuristic@.
+seqHeuristics :: [Heuristic ident tag expr out] -> Heuristic ident tag expr out
+seqHeuristics = foldr Combine noHeuristic
+
 executeHeuristic :: Heuristic ident tag expr out
                  -> [Select expr tag]
                  -> Matrix ident tag pat expr out
@@ -895,20 +904,18 @@ fewerChildRule = Score score
 
 -- ** Necessity based heuristics
 
--- $necessity A column \(i\) is deemed necessary for row \(j\) when all
--- paths to the output of \(j\) in all possible decision trees
--- resulting in the compilation of the matrix tests occurence \(i\). A
--- column \(i\) is necessary if it is necessary for all the rows.
+-- $necessity A column \(i\) is deemed necessary for row \(j\)
+-- when all paths to \(j\), in all possible decision trees, tests
+-- column \(i\). A column \(i\) is necessary if it is necessary for
+-- all outputs.
 --
 -- It seems sensible to favour useful columns over non-useful ones as,
 -- by definition a useful column will be tested in all paths, whether
--- we choose it or not. Choosing it might however result in shorter
+-- we choose it or not. Choosing it early might however result in shorter
 -- paths.
 --
--- Necessity (that we reduced to usefulness) is computed according to
--- the algorithm in section 3 of «
--- [http://moscova.inria.fr/~maranget/papers/warn/warn.pdf](Warnings
--- for pattern matching) ».
+-- Necessity is computed according to the algorithm in section 3 of
+-- [Warnings for pattern matching](http://moscova.inria.fr/~maranget/papers/warn/warn.pdf).
 
 -- | Returns 'True' if column \(i\) is needed for row \(j\) in the
 -- matrix \(P\). This is the case if: the pattern at column \(i\)
@@ -948,8 +955,7 @@ rowsInNeed :: IsTag tag
 rowsInNeed matrix colIdx =
   filter (useful matrix colIdx) [0..length matrix - 1]
 
--- | The score \(n(i)\) is the number of rows \(j\) such that \(i\) is
--- needed for row \(j\).
+-- | The score is the number of output needing this column.
 neededColumns :: IsTag tag
               => Heuristic ident tag expr out
 neededColumns = Score score
@@ -962,17 +968,15 @@ longestPrefix st (p1 : ps)
   | st == p1 = p1 : longestPrefix (succ p1) ps
 longestPrefix _ _ = []
 
--- | The score \(p(i)\) is the index \(j\) of the row such that
--- \(\forall k, 1 ≤ k ≤ j\), column \(i\) is needed for row \(k\).
+-- | The score is the number of consecutive outputs needing the column.
 neededPrefix :: IsTag tag
              => Heuristic ident tag expr out
 neededPrefix = Score score
   where score matrix colIdx _ _ =
           length (longestPrefix 0 (rowsInNeed matrix colIdx))
 
--- | 'constructorPrefix' is a cheaper version of 'neededPrefix', by
--- computing the longest prefix in column \(i\) such that all the
--- patterns are constructor patterns.
+-- | A cheaper version of 'neededPrefix', where a pattern counts in the
+-- score if it is a constructor pattern.
 constructorPrefix :: IsTag tag
                   => Heuristic ident tag expr out
 constructorPrefix = Score score

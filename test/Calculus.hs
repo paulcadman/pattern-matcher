@@ -2,7 +2,7 @@
 
 module Calculus where
 
-import           Language.Pattern.Compiler (Skel (..), noHeuristic)
+import           Language.Pattern.Compiler (IsTag (..), Skel (..), noHeuristic)
 import qualified Language.Pattern.Compiler as Matcher
 
 import           Control.Applicative       hiding (Const)
@@ -16,6 +16,11 @@ import           Test.QuickCheck           hiding (Result)
 
 newtype Var = MkVar String
             deriving(Eq, Ord, Show)
+
+instance Arbitrary Var where
+  arbitrary = do
+    idx <- arbitrary :: Gen Int
+    pure (MkVar ("var_" ++ show idx))
 
 data Typ = TInt
          | TList Typ
@@ -82,14 +87,16 @@ data PatDesc = PWild
              | PNil
              | PCons Pat Pat
              | POr Pat Pat
+             | PAs Pat Var
 
 instance Pretty PatDesc where
-  pretty PWild            = "_"
-  pretty (PVar (MkVar v)) = pretty v
-  pretty (PConst i)       = pretty i
-  pretty PNil             = "[]"
-  pretty (PCons p ps)     = "(" <> pretty p <+> "::" <+> pretty ps <> ")"
-  pretty (POr p p')       = "(" <> pretty p <+> "|" <+> pretty p' <> ")"
+  pretty PWild             = "_"
+  pretty (PVar (MkVar v))  = pretty v
+  pretty (PConst i)        = pretty i
+  pretty PNil              = "[]"
+  pretty (PCons p ps)      = "(" <> pretty p <+> "::" <+> pretty ps <> ")"
+  pretty (POr p p')        = "(" <> pretty p <+> "|" <+> pretty p' <> ")"
+  pretty (PAs p (MkVar v)) = "(" <> pretty p <+> "as" <+> pretty v <> ")"
 
 data Pat = Pat { patDesc :: PatDesc
                , patTyp  :: Typ
@@ -127,6 +134,7 @@ envOfPat pat =
     PNil       -> []
     PCons p ps -> envOfPat p `M.union` envOfPat ps
     POr p p'   -> envOfPat p `M.union` envOfPat p'
+    PAs p v    -> M.insert v (patTyp pat) (envOfPat p)
 
 ---------------------------------------------------------------------------
 -- Simple tree walking interpreter
@@ -154,6 +162,7 @@ instanceOf pat res =
       pure (i `M.union` is)
     (POr p p', _) ->
       either (const (p' `instanceOf` res)) Right (p `instanceOf` res)
+    (PAs p v, res) -> M.insert v res <$> instanceOf p res
     (_, _) -> Left PatternFail
 
 eval :: Map Var Result -> Expr -> Either EvalErr Result
@@ -189,6 +198,7 @@ data Tag = IntTag Int
 instance Eq Tag where
   IntTag i == IntTag j = i == j
   ListTag lt _ == ListTag lt' _ = lt == lt'
+  _ == _ = False
 
 instance Ord Tag where
   IntTag {} `compare` ListTag {} = LT
@@ -201,6 +211,14 @@ instance Pretty Tag where
   pretty (ListTag NilTag typ)  = "[]" <> "@" <> pretty (TList typ)
   pretty (ListTag ConsTag typ) = "_::_" <> "@" <> pretty (TList typ)
 
+instance IsTag Tag where
+  tagRange (IntTag _)      = intRange
+  tagRange (ListTag _ typ) = rangeOf (TList typ)
+
+  subTags (IntTag _)            = []
+  subTags (ListTag NilTag _)    = []
+  subTags (ListTag ConsTag typ) = [rangeOf typ, rangeOf (TList typ)]
+
 rangeOf :: Typ -> [Tag]
 rangeOf TInt        = fmap IntTag [minBound..maxBound]
 rangeOf (TList typ) = listRange typ
@@ -210,21 +228,6 @@ intRange = fmap IntTag [minBound..maxBound]
 
 listRange :: Typ -> [Tag]
 listRange typ = [ListTag NilTag typ, ListTag ConsTag typ]
-
-instance Matcher.IsTag Tag where
-  tagRange (IntTag _)      = intRange
-  tagRange (ListTag _ typ) = listRange typ
-
-  tagArity (IntTag _)          = 0
-  tagArity (ListTag NilTag _)  = 0
-  tagArity (ListTag ConsTag _) = 2
-
-  defaultCons tag@(IntTag _) = Matcher.cons tag []
-  defaultCons tag@(ListTag NilTag _) = Matcher.cons tag []
-  defaultCons tag@(ListTag ConsTag typ) =
-    Matcher.cons tag [ WildSkel (rangeOf typ) Nothing
-                     , WildSkel (rangeOf (TList typ)) Nothing
-                     ]
 
 wildSkel :: Typ -> Maybe Var -> Skel Var Tag
 wildSkel typ = WildSkel (rangeOf typ)
@@ -254,12 +257,9 @@ deconstruct pat =
       ps <- deconstruct ps
       pure (consSkel (listSubTyp (patTyp pat)) p ps)
     POr p p'   -> deconstruct p ++ deconstruct p'
-
-matcher :: Matcher.Matcher Var Tag Pat SExpr SExpr
-matcher =
-  Matcher.Matcher { Matcher.matcherDecompose = deconstruct
-                  , Matcher.matcherHeuristic = noHeuristic
-                  }
+    PAs p v -> [ AsSkel s v
+               | s <- deconstruct p
+               ]
 
 data SExpr = SConst Int
            | SVar Var
@@ -330,7 +330,7 @@ compile expr =
     Cons e es -> SCons (compile e) (compile es)
     Match e brs -> SMatch (compileTree decTree)
       where decTree =
-              Matcher.match matcher (compile e) (fmap (second compile) brs)
+              Matcher.match noHeuristic deconstruct (compile e) (fmap (second compile) brs)
 
 evalSExpr :: Map Var Result -> SExpr -> Either EvalErr Result
 evalSExpr env (SConst i) = Right (IntRes i)
@@ -463,7 +463,7 @@ genMatch size env etyp = do
 leafPat :: Typ -> Gen Pat
 leafPat typ =
   oneof [ pure (pat typ PWild)
-        , fmap (pat typ . PVar . MkVar . ("var_" ++) . show) (arbitrary :: Gen Int)
+        , fmap (pat typ . PVar) arbitrary
         ]
 
 wellFormedPat :: Int -> Typ -> Gen Pat
@@ -473,6 +473,10 @@ wellFormedPat 0 typ =
         ]
 wellFormedPat size listTyp@(TList typ) =
   oneof [ leafPat listTyp
+        , do
+            p <- wellFormedPat (size - 1) listTyp
+            var <- arbitrary
+            pure (pat listTyp (PAs p var))
         , pure (nilPat typ)
         , liftM2 (consPat typ) hd tl
         ]
