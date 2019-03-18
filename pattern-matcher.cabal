@@ -4,7 +4,19 @@
 name:                pattern-matcher
 version:             0.1.0.0
 synopsis:            A library for compiling pattern-matching to decision trees.
--- description:
+description:         pattern-matcher is a library for compiling pattern matching
+                     to efficient decision trees. It is organized to provide
+                     a generic interface to make it suitable for all sorts of
+                     languages. In addition to generating a decision tree, it
+                     also produces unmatched patterns, in the case of
+                     non-exhaustive pattern matching and reports any redundant
+                     patterns, so that it can be used to generate error
+                     or warning messages. The implementation is based
+                     on Compiling Pattern Matching to Good Decision Trees
+                     (http://moscova.inria.fr/~maranget/papers/ml05e-maranget.pdf)
+                     and Warning for pattern matching
+                     (http://moscova.inria.fr/~maranget/papers/warn/warn.pdf).
+
 license:             BSD3
 license-file:        LICENSE
 author:              Guerric Chupin
@@ -14,6 +26,10 @@ category:            Language
 build-type:          Simple
 extra-source-files:  CHANGELOG.md
 cabal-version:       >=1.10
+
+source-repository head
+  type:     git
+  location: git@gitlab.com:chupin/pattern-matcher.git
 
 library
   exposed-modules:     Language.Pattern.Compiler
