@@ -3,19 +3,12 @@
 
 name:                pattern-matcher
 version:             0.1.0.0
-synopsis:            A library for compiling pattern-matching to decision trees.
-description:         pattern-matcher is a library for compiling pattern matching
-                     to efficient decision trees. It is organized to provide
-                     a generic interface to make it suitable for all sorts of
-                     languages. In addition to generating a decision tree, it
-                     also produces unmatched patterns, in the case of
-                     non-exhaustive pattern matching and reports any redundant
-                     patterns, so that it can be used to generate error
-                     or warning messages. The implementation is based
-                     on Compiling Pattern Matching to Good Decision Trees
-                     (http://moscova.inria.fr/~maranget/papers/ml05e-maranget.pdf)
-                     and Warning for pattern matching
-                     (http://moscova.inria.fr/~maranget/papers/warn/warn.pdf).
+synopsis:            A library for compiling pattern-matching to decision trees
+description:         This library implements a transformation from
+                     pattern-matching to decision trees, for use by
+                     compiler writers. It provides support for
+                     generating useful error messages, as well as
+                     efficient trees through the use of heuristics.
 
 license:             BSD3
 license-file:        LICENSE
