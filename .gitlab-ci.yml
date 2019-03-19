@@ -17,15 +17,29 @@ before_script:
   - apt-get install make xz-utils
 
 stages:
-  - build
   - test
 
-build:
-  stage: build
-  script:
-    - stack build
-
-test:
+.test-template: &test-template
   stage: test
   script:
-    - stack test
+    - stack --resolver $STACK_LTS init && stack test
+
+test-ghc8.0.2:
+  <<: *test-template
+  variables:
+    STACK_LTS: lts-9
+
+test-ghc8.2.2:
+  <<: *test-template
+  variables:
+    STACK_LTS: lts-11
+
+test-ghc8.4.3:
+  <<: *test-template
+  variables:
+    STACK_LTS: lts-12
+
+test-ghc8.6.4:
+  <<: *test-template
+  variables:
+    STACK_LTS: lts-13
