@@ -328,7 +328,7 @@ import           Data.List         (transpose, (\\))
 import           Data.Map          (Map)
 import qualified Data.Map          as M
 import           Data.Maybe        (fromJust, mapMaybe)
-import           Data.Monoid       (Sum (..))
+import           Data.Monoid
 import           Data.Ord
 import           Data.Set          (Set)
 import qualified Data.Set          as S

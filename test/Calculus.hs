@@ -11,7 +11,6 @@ import           Control.Monad
 import           Data.Map                  (Map)
 import qualified Data.Map                  as M
 import qualified Data.Set                  as S
-import           Data.Text.Prettyprint.Doc
 import           Test.QuickCheck           hiding (Result)
 
 newtype Var = MkVar String
@@ -24,11 +23,11 @@ instance Arbitrary Var where
 
 data Typ = TInt
          | TList Typ
-         deriving(Eq, Ord, Show)
+         deriving(Eq, Ord)
 
-instance Pretty Typ where
-  pretty TInt        = "Int"
-  pretty (TList typ) = "[" <> pretty typ <> "]"
+instance Show Typ where
+  show TInt        = "Int"
+  show (TList typ) = "[ " ++ show typ ++ " ]"
 
 listSubTyp :: Typ -> Typ
 listSubTyp (TList typ) = typ
@@ -39,30 +38,27 @@ data ExprDesc = Const Int
               | Cons Expr Expr
               | Match Expr [(Pat, Expr)]
 
-instance Pretty ExprDesc where
-  pretty (Const i)          = pretty i
-  pretty (Var (MkVar v))    = pretty v
-  pretty Nil                = "[]"
-  pretty (Cons e es)        = parens (pretty e <+> "::" <+> pretty es)
-  pretty (Match e branches) = prettyMatch e branches
-    where prettyMatch e branches =
-            vsep [ "match" <+> pretty e <+> "with"
-                 , indent 2 (vsep (fmap prettyBr branches))
-                 ]
-          prettyBr (pat, expr) =
-            "|" <+> pretty pat <+> "->" <+> pretty expr
+instance Show ExprDesc where
+  show (Const i)          = show i
+  show (Var (MkVar v))    = show v
+  show Nil                = "[]"
+  show (Cons e es)        = "(" ++ show e ++ " :: " ++ show es ++ ")"
+  show (Match e branches) = showMatch e branches
+    where showMatch e branches =
+            unlines [ "match " ++ show e ++ " with"
+                    , unlines (fmap (("  " ++) . showBr) branches)
+                    ]
+          showBr (pat, expr) =
+            "| " ++ show pat ++ " -> " ++ show expr
 
 data Expr = Expr { exprDesc :: ExprDesc
                  , exprTyp  :: Typ
                  }
 
-instance Pretty Expr where
-  pretty Expr { exprDesc = desc
-              , exprTyp = typ
-              } = "(" <> pretty desc <+> ":" <+> pretty typ <> ")"
-
 instance Show Expr where
-  show = show . pretty
+  show Expr { exprDesc = desc
+            , exprTyp = typ
+            } = "(" ++ show desc ++ " : " ++ show typ ++ ")"
 
 expr :: Typ -> ExprDesc -> Expr
 expr typ desc = Expr { exprDesc = desc
@@ -89,27 +85,24 @@ data PatDesc = PWild
              | POr Pat Pat
              | PAs Pat Var
 
-instance Pretty PatDesc where
-  pretty PWild             = "_"
-  pretty (PVar (MkVar v))  = pretty v
-  pretty (PConst i)        = pretty i
-  pretty PNil              = "[]"
-  pretty (PCons p ps)      = "(" <> pretty p <+> "::" <+> pretty ps <> ")"
-  pretty (POr p p')        = "(" <> pretty p <+> "|" <+> pretty p' <> ")"
-  pretty (PAs p (MkVar v)) = "(" <> pretty p <+> "as" <+> pretty v <> ")"
+instance Show PatDesc where
+  show PWild             = "_"
+  show (PVar (MkVar v))  = show v
+  show (PConst i)        = show i
+  show PNil              = "[]"
+  show (PCons p ps)      = "(" ++ show p ++ " :: " ++ show ps ++ ")"
+  show (POr p p')        = "(" ++ show p ++ " | "  ++ show p' ++ ")"
+  show (PAs p (MkVar v)) = "(" ++ show p ++ " as " ++ show v  ++ ")"
 
 data Pat = Pat { patDesc :: PatDesc
                , patTyp  :: Typ
                }
 
-instance Pretty Pat where
-  pretty Pat { patDesc = desc
-             , patTyp = typ
-             } =
-    "(" <> pretty desc <+> ":" <+> pretty typ <> ")"
-
 instance Show Pat where
-  show = show . pretty
+  show Pat { patDesc = desc
+           , patTyp = typ
+           } =
+    "(" ++ show desc ++ " : " ++ show typ ++ ")"
 
 pat :: Typ -> PatDesc -> Pat
 pat typ desc = Pat { patDesc = desc
@@ -206,10 +199,10 @@ instance Ord Tag where
   IntTag i `compare` IntTag j = compare i j
   ListTag lt _ `compare` ListTag lt' _ = compare lt lt'
 
-instance Pretty Tag where
-  pretty (IntTag i)            = "Int#" <> pretty i
-  pretty (ListTag NilTag typ)  = "[]" <> "@" <> pretty (TList typ)
-  pretty (ListTag ConsTag typ) = "_::_" <> "@" <> pretty (TList typ)
+instance Show Tag where
+  show (IntTag i)            = "Int#" ++ show i
+  show (ListTag NilTag typ)  = "([]@" ++ show typ ++ ")"
+  show (ListTag ConsTag typ) = "(_::_@" ++ show typ ++ ")"
 
 instance IsTag Tag where
   tagRange (IntTag _)      = intRange
@@ -268,32 +261,32 @@ data SExpr = SConst Int
            | SSel SExpr Tag Int
            | SMatch Tree
 
-instance Pretty SExpr where
-  pretty (SConst i) = pretty i
-  pretty (SVar (MkVar v)) = pretty v
-  pretty SNil = "[]"
-  pretty (SCons e es) = "(" <> pretty e <+> "::" <+> pretty es <> ")"
-  pretty (SSel e t idx) =
-    "(" <> pretty e <> parens (pretty t <+> ":" <+> pretty idx) <> ")"
-  pretty (SMatch tree) =
-    "match" <+> braces (pretty tree)
+instance Show SExpr where
+  show (SConst i) = show i
+  show (SVar (MkVar v)) = show v
+  show SNil = "[]"
+  show (SCons e es) = "(" ++ show e ++ " :: " ++ show es ++ ")"
+  show (SSel e t idx) =
+    "(" ++ show e ++ "(" ++ show t ++ " : " ++ show idx ++ ")" ++ ")"
+  show (SMatch tree) =
+    "match " ++ " {" ++ show tree ++ "}"
 
 data Tree = Fail [Pat]
           | Leaf [(Maybe Var, SExpr)] SExpr
           | Switch SExpr [(Tag, Tree)] (Maybe Tree)
 
-instance Pretty Tree where
-  pretty (Fail pats) = "Fail" <+> hsep (fmap pretty (take 10 pats))
-  pretty (Leaf bds out) =
-    vsep (fmap (\(var, e) ->
-                  "let" <+> pv var <+> "=" <+> pretty e <+> "in") bds ++
-          ["leaf" <+> pretty out])
+instance Show Tree where
+  show (Fail pats) = "Fail " ++ unwords (fmap show (take 10 pats))
+  show (Leaf bds out) =
+    unlines (fmap (\(var, e) ->
+                     "let " ++ pv var ++ " = " ++ show e ++ " in") bds ++
+          ["leaf " ++ show out])
     where pv Nothing          = "_"
-          pv (Just (MkVar v)) = pretty v
-  pretty (Switch expr branches def) =
-    vsep ([ "match" <+> pretty expr <+> "with" ] ++
-          fmap (\(tag, tree) -> pretty tag <+> "=>" <+> braces (pretty tree)) branches ++
-          [ maybe "" (\tree -> "_ =>" <+> pretty tree) def ])
+          pv (Just (MkVar v)) = show v
+  show (Switch expr branches def) =
+    unlines ([ "match " ++ show expr ++ " with" ] ++
+             fmap (\(tag, tree) -> show tag ++ " => " ++ "{" ++ show tree ++ "}") branches ++
+             [ maybe "" (\tree -> "_ => " ++ show tree) def ])
 
 
 compileSel :: Matcher.Select SExpr Tag -> SExpr
@@ -310,7 +303,6 @@ patternOfSkel (ConsSkel (Matcher.Cons tag payload)) =
     (ListTag ConsTag typ, [p, ps]) ->
       Pat (PCons (patternOfSkel p) (patternOfSkel ps)) (TList typ)
     _ -> undefined
-
 
 compileTree :: Matcher.DecTree Var Tag Pat SExpr SExpr -> Tree
 compileTree (Matcher.Fail unmatched) = Fail (fmap patternOfSkel unmatched)
