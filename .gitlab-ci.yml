@@ -34,7 +34,7 @@ test-ghc8.2.2:
   variables:
     STACK_LTS: lts-11
 
-test-ghc8.4.3:
+test-ghc8.4.4:
   <<: *test-template
   variables:
     STACK_LTS: lts-12
