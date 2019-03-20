@@ -26,7 +26,7 @@ tested-with:         GHC == 8.6.4
 
 source-repository head
   type:     git
-  location: git@gitlab.com:chupin/pattern-matcher.git
+  location: https://gitlab.com/chupin/pattern-matcher
 
 library
   exposed-modules:     Language.Pattern.Compiler
