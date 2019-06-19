@@ -2,7 +2,7 @@
 -- documentation, see http://haskell.org/cabal/users-guide/
 
 name:                pattern-matcher
-version:             0.1.0.0
+version:             0.1.0.1
 synopsis:            A library for compiling pattern-matching to decision trees
 description:         This library implements a transformation from
                      pattern-matching to decision trees, for use by
