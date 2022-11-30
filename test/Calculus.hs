@@ -322,7 +322,7 @@ compile expr =
     Cons e es -> SCons (compile e) (compile es)
     Match e brs -> SMatch (compileTree decTree)
       where decTree =
-              Matcher.match noHeuristic deconstruct (compile e) (fmap (second compile) brs)
+              Matcher.match noHeuristic deconstruct [compile e] (fmap (second compile) brs)
 
 evalSExpr :: Map Var Result -> SExpr -> Either EvalErr Result
 evalSExpr env (SConst i) = Right (IntRes i)

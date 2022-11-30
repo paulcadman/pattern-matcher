@@ -728,14 +728,14 @@ match :: IsTag tag
       -- ^ A way to decompose the language's patterns into
       -- 'Skel'etons. Producing a list allows to account for
       -- or-patterns. They are tested from left to right.
-      -> expr
-      -- ^ The expression being scrutanized
+      -> [expr]
+      -- ^ The expressions being scrutanized
       -> [(pat, out)]
       -- ^ The list of patterns to match on with the output
       -- associated. Patterns are tried from left to right.
       -> DecTree ident tag pat expr out
 match heuristic decompose expr branches =
-  compileMatrix id heuristic [NoSel expr] matrix
+  compileMatrix id heuristic (NoSel <$> expr) matrix
   where matrix = [ Row pat [] [skel] out
                  | (pat, out) <- branches
                  , skel <- decompose pat
@@ -755,7 +755,7 @@ anomalies :: IsTag tag
           -> [pat]
           -> Anomalies ident tag pat
 anomalies decompose column = treeAnomalies tree
-  where tree = match noHeuristic decompose () (zip column (repeat ()))
+  where tree = match noHeuristic decompose [()] (zip column (repeat ()))
 
         treeAnomalies (Fail unmatched) =
           Anomalies { unmatchedPatterns = Just unmatched
