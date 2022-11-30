@@ -1,3 +1,6 @@
+
+> :information_source: This is a fork of https://gitlab.com/chupin/pattern-matcher by Guerric Chupin
+
 # `pattern-matcher`
 
 `pattern-matcher` is a library for compiling pattern matching to
