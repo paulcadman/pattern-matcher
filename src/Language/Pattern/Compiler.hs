@@ -224,6 +224,7 @@
 module Language.Pattern.Compiler (
 
   match
+  , match''
   , Anomalies(..)
   , anomalies
   -- * Generic pattern representation
@@ -721,7 +722,42 @@ compileMatrix failureCont heuristic occs matrix@(row@(Row _ bds ps out) : ors) =
             defaultBranch = fmap (makeBranch . ([],)) defaultMatrix
 
 -- | Compiles a matching to a decision tree, using the given heuristic.
+match' :: IsTag tag
+      => Heuristic ident tag expr out
+      -- ^ The heuristic to use to resolve ambiguous choices
+      -> (pat -> [Skel ident tag])
+      -- ^ A way to decompose the language's patterns into
+      -- 'Skel'etons. Producing a list allows to account for
+      -- or-patterns. They are tested from left to right.
+      -> [expr]
+      -- ^ The expressions being scrutanized
+      -> [([pat], out)]
+      -- ^ The list of patterns to match on with the output
+      -- associated. Patterns are tried from left to right.
+      -> DecTree ident tag pat expr out
+match' heuristic decompose expr branches =
+  compileMatrix id heuristic (NoSel <$> expr) matrix
+  where matrix = [ Row ps [] skels out
+                 | (ps, out) <- branches
+                 , skels <- decompose <$> ps
+                 ]
+
 match :: IsTag tag
+      => Heuristic ident tag expr out
+      -- ^ The heuristic to use to resolve ambiguous choices
+      -> (pat -> [Skel ident tag])
+      -- ^ A way to decompose the language's patterns into
+      -- 'Skel'etons. Producing a list allows to account for
+      -- or-patterns. They are tested from left to right.
+      -> expr
+      -- ^ The expressions being scrutanized
+      -> [(pat, out)]
+      -- ^ The list of patterns to match on with the output
+      -- associated. Patterns are tried from left to right.
+      -> DecTree ident tag pat expr out
+match heuristic decompose expr branches = match' heuristic decompose [expr] [([pat], out) | (pat, out) <- branches]
+
+match'' :: IsTag tag
       => Heuristic ident tag expr out
       -- ^ The heuristic to use to resolve ambiguous choices
       -> (pat -> Skel ident tag)
@@ -734,12 +770,7 @@ match :: IsTag tag
       -- ^ The list of patterns to match on with the output
       -- associated. Patterns are tried from left to right.
       -> DecTree ident tag pat expr out
-match heuristic decompose expr branches =
-  compileMatrix id heuristic (NoSel <$> expr) matrix
-  where matrix = [ Row ps [] skels out
-                 | (ps, out) <- branches
-                 , let skels = decompose <$> ps
-                 ]
+match'' heuristic decompose = match' heuristic (pure . decompose)
 
 -- | Gathers all the anomalies present in a matching. 'Nothing'
 -- indicating the absence of an anomaly.
@@ -750,12 +781,12 @@ data Anomalies ident tag pat =
 
 -- | Simplified version of 'match', that simply gathers the anomalies of
 -- the decision tree.
-anomalies :: IsTag tag
-          => (pat -> Skel ident tag)
+anomalies' :: IsTag tag
+          => (pat -> [Skel ident tag])
           -> [[pat]]
           -> Anomalies ident tag [pat]
-anomalies decompose column = treeAnomalies tree
-  where tree = match noHeuristic decompose [()] (zip column (repeat ()))
+anomalies' decompose column = treeAnomalies tree
+  where tree = match' noHeuristic decompose [()] (zip column (repeat ()))
 
         treeAnomalies (Fail unmatched) =
           Anomalies { unmatchedPatterns = Just unmatched
@@ -779,6 +810,12 @@ anomalies decompose column = treeAnomalies tree
                   where Anomalies { unmatchedPatterns = newUnmatched
                                   , redundantPatterns = newRedundant
                                   } = treeAnomalies tree
+anomalies :: IsTag tag
+          => (pat -> [Skel ident tag])
+          -> [pat]
+          -> Anomalies ident tag pat
+anomalies decompose column = undefined --anomalies' decompose (pure column)
+
 
 ---------------------------------------------------------------------------
 -- Heuristics
