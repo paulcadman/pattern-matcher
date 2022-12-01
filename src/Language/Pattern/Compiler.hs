@@ -447,7 +447,7 @@ select (Cons tag subps) sel =
   fmap (Sel sel tag . fst) (zip [0..] subps)
 
 data Row ident tag pat expr out =
-  Row { rowOrigin   :: pat
+  Row { rowOrigin   :: [pat]
       , rowBindings :: [Binding ident (Select expr tag)]
       , rowPatterns :: [Skel ident tag]
       , _rowOutput  :: out
@@ -579,7 +579,7 @@ data DecTree ident tag pat expr out =
          -- heuristics.
          , leafOut       :: out
          -- ^ The result obtained when arriving at this leaf
-         , leafRedundant :: Maybe [pat]
+         , leafRedundant :: Maybe [[pat]]
          }
   -- | Branching on an 'tag' expression
   | Switch { switchOn       :: Select expr tag
@@ -724,21 +724,21 @@ compileMatrix failureCont heuristic occs matrix@(row@(Row _ bds ps out) : ors) =
 match :: IsTag tag
       => Heuristic ident tag expr out
       -- ^ The heuristic to use to resolve ambiguous choices
-      -> (pat -> [Skel ident tag])
+      -> (pat -> Skel ident tag)
       -- ^ A way to decompose the language's patterns into
       -- 'Skel'etons. Producing a list allows to account for
       -- or-patterns. They are tested from left to right.
       -> [expr]
       -- ^ The expressions being scrutanized
-      -> [(pat, out)]
+      -> [([pat], out)]
       -- ^ The list of patterns to match on with the output
       -- associated. Patterns are tried from left to right.
       -> DecTree ident tag pat expr out
 match heuristic decompose expr branches =
   compileMatrix id heuristic (NoSel <$> expr) matrix
-  where matrix = [ Row pat [] [skel] out
-                 | (pat, out) <- branches
-                 , skel <- decompose pat
+  where matrix = [ Row ps [] skels out
+                 | (ps, out) <- branches
+                 , let skels = decompose <$> ps
                  ]
 
 -- | Gathers all the anomalies present in a matching. 'Nothing'
@@ -751,9 +751,9 @@ data Anomalies ident tag pat =
 -- | Simplified version of 'match', that simply gathers the anomalies of
 -- the decision tree.
 anomalies :: IsTag tag
-          => (pat -> [Skel ident tag])
-          -> [pat]
-          -> Anomalies ident tag pat
+          => (pat -> Skel ident tag)
+          -> [[pat]]
+          -> Anomalies ident tag [pat]
 anomalies decompose column = treeAnomalies tree
   where tree = match noHeuristic decompose [()] (zip column (repeat ()))
 
@@ -887,7 +887,7 @@ computeSubMatrices :: IsTag tag
                    => [[Skel ident tag]]
                    -> [[[Skel ident tag]]]
 computeSubMatrices rawMatrix = subSkels
-  where matrix = fmap (\ps -> Row () [] ps ()) rawMatrix
+  where matrix = fmap (\ps -> Row [()] [] ps ()) rawMatrix
         conses = columnConstructors (headColumn matrix)
         range = skelRange (head (head rawMatrix))
         defaultSubMat
